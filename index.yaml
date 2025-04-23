@@ -1,0 +1,140 @@
+apiVersion: v1
+entries:
+  flyte:
+  - apiVersion: v2
+    created: "2025-04-23T16:04:43.773311673Z"
+    dependencies:
+    - alias: flyte
+      name: flyte-core
+      repository: file://../flyte-core
+      version: v0.1.10
+    - condition: contour.enabled
+      name: contour
+      repository: https://charts.bitnami.com/bitnami
+      version: 7.10.1
+    - alias: sparkoperator
+      condition: sparkoperator.enabled
+      name: spark-operator
+      repository: https://kubeflow.github.io/spark-operator
+      version: 1.1.15
+    - alias: daskoperator
+      condition: daskoperator.enabled
+      name: dask-kubernetes-operator
+      repository: https://helm.dask.org
+      version: 2022.12.0
+    - condition: kubernetes-dashboard.enabled
+      name: kubernetes-dashboard
+      repository: https://kubernetes.github.io/dashboard/
+      version: 4.0.2
+    description: A Helm chart for Flyte Sandbox
+    digest: 1a978bd1ebe7288362eec44d6712d36d2500744782f10e5b3d1f8f6ba87efcd3
+    name: flyte
+    type: application
+    urls:
+    - https://github.com/exa-labs/flyte/releases/download/flyte-v0.1.10/flyte-v0.1.10.tgz
+    version: v0.1.10
+  flyte-binary:
+  - apiVersion: v2
+    appVersion: 1.16.0
+    created: "2025-04-23T16:04:43.154497771Z"
+    dependencies:
+    - alias: flyteconnector
+      condition: flyteconnector.enabled
+      name: flyteconnector
+      repository: file://../flyteconnector
+      version: v0.1.10
+    description: Chart for basic single Flyte executable deployment
+    digest: 5692d65237699c3241c727626d3c20e23968eb6db387f3cefa8c3c8afc56d75f
+    name: flyte-binary
+    type: application
+    urls:
+    - https://github.com/exa-labs/flyte/releases/download/flyte-binary-v0.1.10/flyte-binary-v0.1.10.tgz
+    version: v0.1.10
+  flyte-core:
+  - apiVersion: v2
+    created: "2025-04-23T16:04:43.285719955Z"
+    dependencies:
+    - alias: flyteconnector
+      condition: flyteconnector.enabled
+      name: flyteconnector
+      repository: file://../flyteconnector
+      version: v0.1.10
+    description: A Helm chart for Flyte core
+    digest: 8a3007b006e5a4283329c86491d97c1e16b4db7bfe0caae97a4860ef50cc9717
+    name: flyte-core
+    type: application
+    urls:
+    - https://github.com/exa-labs/flyte/releases/download/flyte-core-v0.1.10/flyte-core-v0.1.10.tgz
+    version: v0.1.10
+  flyte-deps:
+  - apiVersion: v2
+    created: "2025-04-23T16:04:43.439456903Z"
+    dependencies:
+    - condition: contour.enabled
+      name: contour
+      repository: https://charts.bitnami.com/bitnami
+      version: 7.10.1
+    - alias: sparkoperator
+      condition: sparkoperator.enabled
+      name: spark-operator
+      repository: https://kubeflow.github.io/spark-operator
+      version: 1.1.15
+    - alias: daskoperator
+      condition: daskoperator.enabled
+      name: dask-kubernetes-operator
+      repository: https://helm.dask.org
+      version: 2022.12.0
+    - condition: kubernetes-dashboard.enabled
+      name: kubernetes-dashboard
+      repository: https://kubernetes.github.io/dashboard/
+      version: 4.0.2
+    description: A Helm chart for Flyte dependency
+    digest: 0d50e8cca9a65323d05c17edd04e22ab7e80cce8379b6a4256108da8360aa13c
+    name: flyte-deps
+    type: application
+    urls:
+    - https://github.com/exa-labs/flyte/releases/download/flyte-deps-v0.1.10/flyte-deps-v0.1.10.tgz
+    version: v0.1.10
+  flyte-sandbox:
+  - apiVersion: v2
+    appVersion: 1.16.1
+    created: "2025-04-23T16:04:43.608012143Z"
+    dependencies:
+    - condition: docker-registry.enabled
+      name: docker-registry
+      repository: https://helm.twun.io/
+      version: 2.2.2
+    - condition: flyte-binary.enabled
+      name: flyte-binary
+      repository: file://../flyte-binary
+      version: v0.1.10
+    - condition: kubernetes-dashboard.enabled
+      name: kubernetes-dashboard
+      repository: https://kubernetes.github.io/dashboard/
+      version: 6.0.0
+    - condition: minio.enabled
+      name: minio
+      repository: https://charts.bitnami.com/bitnami
+      version: 12.6.7
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 12.8.1
+    description: A Helm chart for the Flyte local sandbox
+    digest: 0acf8d424ec3725d3dd03a6d3fe20057282d3059904d99728786321f4277e390
+    name: flyte-sandbox
+    type: application
+    urls:
+    - https://github.com/exa-labs/flyte/releases/download/flyte-sandbox-0.1.0/flyte-sandbox-0.1.0.tgz
+    version: 0.1.0
+  flyteconnector:
+  - apiVersion: v2
+    created: "2025-04-23T16:04:43.879555728Z"
+    description: A Helm chart for Flyte connector
+    digest: ed96016f16675effb7bcea082ed9f525035d2fa232c3aabb3af04343266eb8f6
+    name: flyteconnector
+    type: application
+    urls:
+    - https://github.com/exa-labs/flyte/releases/download/flyteconnector-v0.1.10/flyteconnector-v0.1.10.tgz
+    version: v0.1.10
+generated: "2025-04-23T16:04:43.879562721Z"
