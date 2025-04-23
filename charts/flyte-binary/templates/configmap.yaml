@@ -139,6 +139,9 @@ data:
       appAuth:
         {{- if .Values.configuration.auth.enableAuthServer }}
         selfAuthServer:
+          refreshTokenLifespan: {{ .Values.configuration.auth.refreshTokenLifespan }}
+          accessTokenLifespan: {{ .Values.configuration.auth.accessTokenLifespan }}
+          authorizationCodeLifespan: {{ .Values.configuration.auth.authorizationCodeLifespan }}
           staticClients:
             flytepropeller:
               grant_types:
