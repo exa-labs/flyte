@@ -21,6 +21,16 @@ jobs:
           git config user.name "$GITHUB_ACTOR"
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
 
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+
+      - name: Add required Helm repositories
+        run: |
+          helm repo add twun https://helm.twun.io/
+          helm repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo update
+
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.6.0
         env:
