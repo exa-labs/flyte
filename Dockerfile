@@ -1,5 +1,5 @@
-ARG FLYTECONSOLE_VERSION=latest
-FROM ghcr.io/flyteorg/flyteconsole:${FLYTECONSOLE_VERSION} AS flyteconsole
+ARG FLYTECONSOLE_VERSION=v1.20.0
+FROM 472386928882.dkr.ecr.us-west-2.amazonaws.com/exa-labs/flyteconsole:${FLYTECONSOLE_VERSION} AS flyteconsole
 
 
 FROM --platform=${BUILDPLATFORM} golang:1.22-bookworm AS flytebuilder
