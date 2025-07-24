@@ -14,7 +14,7 @@ LD_FLAGS="-s -w -X $(PACKAGE)/version.Version=$(GIT_VERSION) -X $(PACKAGE)/versi
 TMP_BUILD_DIR := .tmp_build
 
 .PHONY: cmd/single/dist
-cmd/single/dist: export FLYTECONSOLE_VERSION ?= latest
+cmd/single/dist: export FLYTECONSOLE_VERSION ?= v1.20.0
 cmd/single/dist:
 	script/get_flyteconsole_dist.sh
 
@@ -119,7 +119,7 @@ setup_local_dev: ## Sets up k3d cluster with Flyte dependencies for local develo
 # This builds the flyte binary image for whatever architecture you're on. Don't push this image to the official
 # registry because we need those to be multi-arch.
 .PHONY: build_native_flyte
-build_native_flyte: FLYTECONSOLE_VERSION := latest
+build_native_flyte: FLYTECONSOLE_VERSION := v1.20.0
 build_native_flyte:
 	docker build \
 	--build-arg FLYTECONSOLE_VERSION=$(FLYTECONSOLE_VERSION) \

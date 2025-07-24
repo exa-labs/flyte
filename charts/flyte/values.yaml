@@ -219,7 +219,7 @@ flyte:
     replicaCount: 1
     image:
       # -- Docker image for Flyteconsole deployment
-      repository: cr.flyte.org/flyteorg/flyteconsole  # FLYTECONSOLE_IMAGE
+      repository: 472386928882.dkr.ecr.us-west-2.amazonaws.com/exa-labs/flyteconsole  # FLYTECONSOLE_IMAGE
       # -- Docker image tag
       tag: v1.20.0  # FLYTECONSOLE_TAG
       # -- Docker image pull policy
