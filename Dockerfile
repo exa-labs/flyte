@@ -1,4 +1,4 @@
-ARG FLYTECONSOLE_VERSION=v1.20.0
+ARG FLYTECONSOLE_VERSION=latest
 FROM 472386928882.dkr.ecr.us-west-2.amazonaws.com/exa-labs/flyteconsole:${FLYTECONSOLE_VERSION} AS flyteconsole
 
 

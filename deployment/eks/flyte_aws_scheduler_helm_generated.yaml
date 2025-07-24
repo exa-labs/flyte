@@ -1126,7 +1126,7 @@ spec:
         seLinuxOptions:
           type: spc_t
       containers:
-      - image: "cr.flyte.org/flyteorg/flyteconsole:v1.20.0"
+      - image: "cr.flyte.org/flyteorg/flyteconsole:latest"
         imagePullPolicy: "IfNotPresent"
         name: flyteconsole
         envFrom:

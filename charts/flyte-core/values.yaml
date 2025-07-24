@@ -410,7 +410,7 @@ flyteconsole:
   image:
     # -- Docker image for Flyteconsole deployment
     repository: 472386928882.dkr.ecr.us-west-2.amazonaws.com/exa-labs/flyteconsole  # FLYTECONSOLE_IMAGE
-    tag: v1.20.0  # FLYTECONSOLE_TAG
+    tag: latest  # FLYTECONSOLE_TAG
     pullPolicy: IfNotPresent
   # -- Default resources requests and limits for Flyteconsole deployment
   resources:
