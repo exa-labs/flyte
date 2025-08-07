@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+	"strconv"
+	"strings"
 
 	kubeflowv1 "github.com/kubeflow/training-operator/pkg/apis/kubeflow.org/v1"
 	apiv1 "k8s.io/api/core/v1"
@@ -142,6 +144,92 @@ func (p pytorchOperatorResourceHandler) BuildResource(ctx context.Context, taskC
 	} else {
 		return nil, flyteerr.Errorf(flyteerr.BadTaskSpecification,
 			"Invalid TaskSpecification, unsupported task template version [%v] key", taskTemplate.GetTaskTypeVersion())
+	}
+
+	// Apply runtime overrides from environment variables if provided.
+	// Supports two env vars:
+	// - PET_NNODES: accepts either a single integer (e.g., "1") or a range "min:max" (e.g., "2:4") for elastic.
+	// - FLYTE_PYTORCH_WORKERS: explicit worker replicas override (non-elastic or elastic max replicas).
+	if taskCtx != nil && taskCtx.TaskExecutionMetadata() != nil {
+		env := taskCtx.TaskExecutionMetadata().GetEnvironmentVariables()
+		if env != nil {
+			// Helper to parse int safely
+			parseInt := func(s string) (int32, bool) {
+				v, err := strconv.Atoi(strings.TrimSpace(s))
+				if err != nil || v < 0 {
+					return 0, false
+				}
+				return int32(v), true
+			}
+
+			// 1) Handle PET_NNODES for elastic and non-elastic
+			if val, ok := env["PET_NNODES"]; ok && strings.TrimSpace(val) != "" {
+				val = strings.TrimSpace(val)
+				if strings.Contains(val, ":") {
+					parts := strings.SplitN(val, ":", 2)
+					if len(parts) == 2 {
+						if min, okMin := parseInt(parts[0]); okMin {
+							if max, okMax := parseInt(parts[1]); okMax {
+								if max < min {
+									// swap to be safe
+									t := min
+									min = max
+									max = t
+								}
+								// If elastic, update policy and set workers to max
+								if elasticPolicy != nil {
+									elasticPolicy.MinReplicas = &min
+									elasticPolicy.MaxReplicas = &max
+									workerReplicaSpec.Replicas = &max
+								} else {
+									// Non-elastic: interpret PET_NNODES as total nodes (master + workers)
+									// Aim for "max" nodes; workers = max-1, clamp at 0 for single node
+									if max <= 1 {
+										zero := int32(0)
+										workerReplicaSpec.Replicas = &zero
+									} else {
+										workers := max - 1
+										workerReplicaSpec.Replicas = &workers
+									}
+								}
+							}
+						}
+					}
+				} else {
+					if n, okN := parseInt(val); okN {
+						if elasticPolicy != nil {
+							// elastic single value -> min=max=n, workers=n
+							elasticPolicy.MinReplicas = &n
+							elasticPolicy.MaxReplicas = &n
+							workerReplicaSpec.Replicas = &n
+						} else {
+							// non-elastic: interpret as total nodes (master+workers)
+							if n <= 1 {
+								zero := int32(0)
+								workerReplicaSpec.Replicas = &zero
+							} else {
+								workers := n - 1
+								workerReplicaSpec.Replicas = &workers
+							}
+						}
+					}
+				}
+			}
+
+			// 2) Explicit worker replicas override takes precedence if provided
+			if val, ok := env["FLYTE_PYTORCH_WORKERS"]; ok && strings.TrimSpace(val) != "" {
+				if n, okN := parseInt(val); okN {
+					workerReplicaSpec.Replicas = &n
+					// For elastic, treat this as max replicas if policy present and min > max
+					if elasticPolicy != nil {
+						if elasticPolicy.MinReplicas != nil && *elasticPolicy.MinReplicas > n {
+							elasticPolicy.MinReplicas = &n
+						}
+						elasticPolicy.MaxReplicas = &n
+					}
+				}
+			}
+		}
 	}
 
 	jobSpec := kubeflowv1.PyTorchJobSpec{}
