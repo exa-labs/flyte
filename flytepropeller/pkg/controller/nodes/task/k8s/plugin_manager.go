@@ -461,19 +461,24 @@ func (e PluginManager) Abort(ctx context.Context, tCtx pluginsCore.TaskExecution
 func (e *PluginManager) clearFinalizer(ctx context.Context, o client.Object) error {
 	// Checking for the old finalizer too for backwards compatibility. This should eventually be removed
 	// Go does short-circuiting and we have to make sure both are removed
+	orig := o.DeepCopyObject().(client.Object)
 	finalizerRemoved := controllerutil.RemoveFinalizer(o, finalizer)
 	oldFinalizerRemoved := controllerutil.RemoveFinalizer(o, oldFinalizer)
+
 	if finalizerRemoved || oldFinalizerRemoved {
-		err := e.kubeClient.GetClient().Update(ctx, o)
-		if err != nil && !isK8sObjectNotExists(err) {
-			logger.Warningf(ctx, "Failed to clear finalizer for Resource with name: %v/%v. Error: %v",
-				o.GetNamespace(), o.GetName(), err)
-			return err
+		// Use a MergeFrom patch to reduce conflicts with concurrent reconcilers.
+		if err := e.kubeClient.GetClient().Patch(ctx, o, client.MergeFrom(orig)); err != nil {
+			if !isK8sObjectNotExists(err) {
+				logger.Warningf(ctx, "Failed to clear finalizer for Resource with name: %v/%v. Error: %v",
+					o.GetNamespace(), o.GetName(), err)
+				return err
+			}
 		}
 	} else {
 		logger.Debugf(ctx, "Finalizer is already cleared from Resource with name: %v/%v",
 			o.GetNamespace(), o.GetName())
 	}
+
 	return nil
 }
 
