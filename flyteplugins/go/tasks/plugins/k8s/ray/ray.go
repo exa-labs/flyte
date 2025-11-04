@@ -585,8 +585,16 @@ func getEventInfoForRayJob(logConfig logs.LogConfig, pluginContext k8s.PluginCon
 		)
 	}
 
-	// TODO: Retrieve the name of head pod from rayJob.status, and add it to task logs
-	// RayJob CRD does not include the name of the worker or head pod for now
+	if rayJob.Status.RayClusterName != "" {
+		headPodName, err := getHeadPodName(pluginContext, rayJob)
+		if err != nil {
+			pluginContext.Logger().Warnf("Failed to retrieve Ray head pod name: %v", err)
+		} else if headPodName != "" {
+			input.PodName = headPodName
+			input.ContainerName = "ray-head"
+		}
+	}
+
 	logOutput, err := logPlugin.GetTaskLogs(input)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate task logs. Error: %w", err)
@@ -606,6 +614,46 @@ func getEventInfoForRayJob(logConfig logs.LogConfig, pluginContext k8s.PluginCon
 	}
 
 	return &pluginsCore.TaskInfo{Logs: taskLogs}, nil
+}
+
+func getHeadPodName(pluginContext k8s.PluginContext, rayJob *rayv1.RayJob) (string, error) {
+	kubeClient := pluginContext.KubeClient()
+	if kubeClient == nil {
+		return "", fmt.Errorf("kube client is not available")
+	}
+
+	// KubeRay uses ray.io/cluster and ray.io/component labels
+	podList := &v1.PodList{}
+	err := kubeClient.GetClient().List(
+		pluginContext.TaskExecutionContext(),
+		podList,
+		client.InNamespace(rayJob.Namespace),
+		client.MatchingLabels{
+			"ray.io/cluster":   rayJob.Status.RayClusterName,
+			"ray.io/component": "head",
+		},
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to list Ray head pods: %w", err)
+	}
+
+	var headPod *v1.Pod
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		if pod.Status.Phase == v1.PodRunning {
+			headPod = pod
+			break
+		}
+		if headPod == nil {
+			headPod = pod
+		}
+	}
+
+	if headPod == nil {
+		return "", fmt.Errorf("no Ray head pod found for cluster %s", rayJob.Status.RayClusterName)
+	}
+
+	return headPod.Name, nil
 }
 
 func (plugin rayJobResourceHandler) GetTaskPhase(ctx context.Context, pluginContext k8s.PluginContext, resource client.Object) (pluginsCore.PhaseInfo, error) {
