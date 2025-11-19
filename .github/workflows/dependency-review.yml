@@ -5,6 +5,8 @@ permissions:
   pull-requests: write
 jobs:
   dependency-review:
+    # Skip on fork since dependency graph may not be enabled
+    if: github.repository == 'flyteorg/flyte'
     runs-on: ubuntu-latest
     steps:
       - name: 'Checkout Repository'

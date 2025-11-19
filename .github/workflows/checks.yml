@@ -90,6 +90,8 @@ jobs:
 
   build_docker_images:
     name: Build Images
+    # Skip on fork since FLYTE_BOT secrets may not be available
+    if: secrets.FLYTE_BOT_PAT != '' && secrets.FLYTE_BOT_USERNAME != ''
     uses: ./.github/workflows/publish-images.yml
     with:
       push: false

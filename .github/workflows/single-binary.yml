@@ -11,6 +11,8 @@ on:
       - master
       - rc/*
       - "release-v**"
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 jobs:
@@ -106,7 +108,7 @@ jobs:
           registry: ghcr.io
           username: "${{ secrets.FLYTE_BOT_USERNAME }}"
           password: "${{ secrets.FLYTE_BOT_PAT }}"
-      - name: Build and push Image
+      - name: Build and push Image to GHCR
         if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
         uses: docker/build-push-action@v6
         with:
@@ -118,6 +120,51 @@ jobs:
             FLYTE_VERSION=${{ env.FLYTE_VERSION }}
           file: Dockerfile
           push: true
+      - name: Configure AWS credentials
+        if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-west-2' }}
+      - name: Login to Amazon ECR
+        if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Extract tag version
+        if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG=${GITHUB_REF#refs/tags/}
+            echo "version=$TAG" >> "$GITHUB_OUTPUT"
+            echo "is_tag=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=latest" >> "$GITHUB_OUTPUT"
+            echo "is_tag=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Ensure ECR repository exists
+        if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+        env:
+          REPOSITORY_NAME: ${{ secrets.ECR_REPOSITORY_PREFIX || 'exa-hephaestus' }}/flyte
+        run: |
+          aws ecr describe-repositories --repository-names "$REPOSITORY_NAME" >/dev/null 2>&1 || \
+          aws ecr create-repository --repository-name "$REPOSITORY_NAME" >/dev/null
+      - name: Build and push Image to AWS ECR
+        if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64, linux/amd64
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_PREFIX || 'exa-hephaestus' }}/flyte:${{ steps.tag.outputs.version }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_PREFIX || 'exa-hephaestus' }}/flyte:latest
+          build-args: |
+            FLYTECONSOLE_VERSION=${{ env.FLYTECONSOLE_VERSION }}
+            FLYTE_VERSION=${{ env.FLYTE_VERSION }}
+          file: Dockerfile
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   sandbox-bundled-functional-tests:
     runs-on: ubuntu-latest

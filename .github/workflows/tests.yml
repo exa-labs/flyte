@@ -21,6 +21,8 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Compile
+        env:
+          FLYTECONSOLE_IMAGE: ghcr.io/flyteorg/flyteconsole:latest
         run: make compile
       - name: Run tests
         run: make test_unit
