@@ -34,7 +34,9 @@ update_boilerplate:
 .PHONY: helm
 helm: ## Generate K8s Manifest from Helm Charts.
 	bash script/generate_helm.sh
-	make -C docker/sandbox-bundled manifests
+	@if [ "$(SKIP_SANDBOX_BUNDLED)" != "true" ]; then \
+		make -C docker/sandbox-bundled manifests; \
+	fi
 
 .PHONY: release_automation
 release_automation:

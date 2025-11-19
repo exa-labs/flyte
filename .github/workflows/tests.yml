@@ -90,4 +90,6 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Helm and diff
+        env:
+          SKIP_SANDBOX_BUNDLED: "true"
         run: DELTA_CHECK=true make helm

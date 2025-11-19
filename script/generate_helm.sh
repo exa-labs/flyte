@@ -23,10 +23,17 @@ helm repo add bitnami https://charts.bitnami.com/bitnami || true
 helm repo add kubeflow https://kubeflow.github.io/spark-operator || true
 helm repo add dask https://helm.dask.org || true
 helm repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/ || true
-helm repo add twuni https://helm.twun.io || true
+if [ "${SKIP_SANDBOX_BUNDLED}" != "true" ]; then
+  helm repo add twuni https://helm.twun.io || true
+fi
 helm repo update || true
 
-for chart in flyte-deps flyte-core flyte-binary flyte-sandbox flyte; do
+CHARTS="flyte-deps flyte-core flyte-binary flyte"
+if [ "${SKIP_SANDBOX_BUNDLED}" != "true" ]; then
+  CHARTS="flyte-deps flyte-core flyte-binary flyte-sandbox flyte"
+fi
+
+for chart in ${CHARTS}; do
   for i in 1 2 3; do
     if helm dep update ${DIR}/../charts/${chart}/; then
       break
