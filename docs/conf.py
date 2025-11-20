@@ -306,7 +306,35 @@ redirects = {
 autosummary_generate = True
 suppress_warnings = ["autosectionlabel.*", "myst.header"]
 autodoc_typehints = "description"
-autodoc_mock_imports = ["flytekitplugins.hive", "flytekitplugins.pandera"]
+autodoc_mock_imports = [
+    "flytekitplugins.hive",
+    "flytekitplugins.pandera",
+    "flytekitplugins.ray",
+    "flytekitplugins.spark",
+    "flytekitplugins.kfpytorch",
+    "flytekitplugins.kftensorflow",
+    "flytekitplugins.mlflow",
+    "flytekitplugins.papermill",
+    "flytekitplugins.sqlalchemy",
+    "flytekitplugins.dask",
+    "flytekitplugins.deck",
+    "flytekitplugins.greatexpectations",
+    "flytekitplugins.snowflake",
+    "flytekitplugins.bigquery",
+    "flytekitplugins.dolt",
+    "flytekitplugins.duckdb",
+    "flytekitplugins.polars",
+    "flytekitplugins.vaex",
+    "flytekitplugins.modin",
+    "flytekitplugins.whylogs",
+    "flytekitplugins.wandb",
+    "flytekitplugins.neptune",
+    "flytekitplugins.comet_ml",
+    "flytekitplugins.optuna",
+    "flytekitplugins.huggingface",
+    "flytekitplugins.onnx",
+    "flytekitplugins.inference",
+]
 
 # The master toctree document.
 master_doc = "index"
