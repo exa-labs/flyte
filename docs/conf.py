@@ -306,7 +306,7 @@ redirects = {
 autosummary_generate = True
 suppress_warnings = ["autosectionlabel.*", "myst.header"]
 autodoc_typehints = "description"
-autodoc_mock_imports = ["flytekitplugins.hive"]
+autodoc_mock_imports = ["flytekitplugins.hive", "flytekitplugins.pandera"]
 
 # The master toctree document.
 master_doc = "index"
