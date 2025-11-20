@@ -777,6 +777,7 @@ class CustomWarningSuppressor(logging.Filter):
             "autodoc: failed to import module 'awssagemaker' from module 'flytekitplugins'",
             "Enumerated list ends without a blank line",
             'Unknown directive type "toc".',  # need to fix flytesnacks/contribute.md
+            "Failed to import flytekitplugins.",  # Suppress all flytekitplugins import failures
         )
 
         if msg.strip().startswith(filter_out):
