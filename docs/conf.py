@@ -319,6 +319,7 @@ autodoc_mock_imports = [
     "flytekitplugins.dask",
     "flytekitplugins.deck",
     "flytekitplugins.greatexpectations",
+    "flytekitplugins.great_expectations",
     "flytekitplugins.snowflake",
     "flytekitplugins.bigquery",
     "flytekitplugins.dolt",
