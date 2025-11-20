@@ -334,6 +334,20 @@ autodoc_mock_imports = [
     "flytekitplugins.huggingface",
     "flytekitplugins.onnx",
     "flytekitplugins.inference",
+    "flytekitplugins.awssagemaker_inference",
+    "flytekitplugins.awssagemaker",
+    "flytekitplugins.awsathena",
+    "flytekitplugins.awsbatch",
+    "flytekitplugins.kfmpi",
+    "flytekitplugins.envd",
+    "flytekitplugins.flyteinteractive",
+    "flytekitplugins.mmcloud",
+    "flytekitplugins.openai",
+    "flytekitplugins.perian",
+    "flytekitplugins.airflow",
+    "flytekitplugins.dbt",
+    "flytekitplugins.memray",
+    "flytekitplugins.omegaconf",
 ]
 
 # The master toctree document.
