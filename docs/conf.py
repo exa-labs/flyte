@@ -351,6 +351,7 @@ autodoc_mock_imports = [
     "flytekitplugins.dbt",
     "flytekitplugins.memray",
     "flytekitplugins.omegaconf",
+    "flytekitplugins.k8sdataservice",
 ]
 
 # The master toctree document.
