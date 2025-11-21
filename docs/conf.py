@@ -784,6 +784,7 @@ class CustomWarningSuppressor(logging.Filter):
             "A mocked object is detected: 'flytekitplugins.",  # Suppress mocked object detection warnings
             "Line block ends without a blank line",  # Suppress RST line block errors in upstream flytekit
             "Undefined substitution referenced:",  # Suppress RST substitution errors in upstream flytekit
+            "undefined label:",  # Suppress undefined label errors in upstream flytekit
         )
 
         if msg.strip().startswith(filter_out):
