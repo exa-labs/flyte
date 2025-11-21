@@ -309,6 +309,7 @@ autodoc_typehints = "description"
 autodoc_mock_imports = [
     "flytekitplugins.athena",
     "flytekitplugins.hive",
+    "flytekitplugins.perian_job",
     "flytekitplugins.pandera",
     "flytekitplugins.ray",
     "flytekitplugins.spark",
