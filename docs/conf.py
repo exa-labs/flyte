@@ -779,6 +779,7 @@ class CustomWarningSuppressor(logging.Filter):
             "Enumerated list ends without a blank line",
             'Unknown directive type "toc".',  # need to fix flytesnacks/contribute.md
             "Failed to import flytekitplugins.",  # Suppress all flytekitplugins import failures
+            "A mocked object is detected: 'flytekitplugins.",  # Suppress mocked object detection warnings
         )
 
         if msg.strip().startswith(filter_out):
