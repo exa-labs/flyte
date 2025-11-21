@@ -784,10 +784,13 @@ class CustomWarningSuppressor(logging.Filter):
             return False
 
         # Suppress RST syntax errors in upstream flytekit configuration docstring
-        if "start-string without end-string" in msg and (
-            "flytekit/flytekit/configuration/__init__.py" in str(record.location)
-            or "flytekit/configuration/__init__.py" in str(record.location)
-            or "docstring of flytekit.configuration" in str(record.location)
+        if (
+            ("start-string without end-string" in msg or "Block quote ends without a blank line" in msg)
+            and (
+                "flytekit/flytekit/configuration/__init__.py" in str(record.location)
+                or "flytekit/configuration/__init__.py" in str(record.location)
+                or "docstring of flytekit.configuration" in str(record.location)
+            )
         ):
             return False
 
