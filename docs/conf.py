@@ -782,6 +782,7 @@ class CustomWarningSuppressor(logging.Filter):
             'Unknown directive type "toc".',  # need to fix flytesnacks/contribute.md
             "Failed to import flytekitplugins.",  # Suppress all flytekitplugins import failures
             "A mocked object is detected: 'flytekitplugins.",  # Suppress mocked object detection warnings
+            "Line block ends without a blank line",  # Suppress RST line block errors in upstream flytekit
         )
 
         if msg.strip().startswith(filter_out):
