@@ -783,8 +783,12 @@ class CustomWarningSuppressor(logging.Filter):
         if msg.strip().startswith(filter_out):
             return False
 
-        # Suppress RST syntax errors in upstream flytekit
-        if "Inline literal start-string without end-string" in msg and "flytekit/configuration/__init__.py" in str(record.location):
+        # Suppress RST syntax errors in upstream flytekit configuration docstring
+        if "start-string without end-string" in msg and (
+            "flytekit/flytekit/configuration/__init__.py" in str(record.location)
+            or "flytekit/configuration/__init__.py" in str(record.location)
+            or "docstring of flytekit.configuration" in str(record.location)
+        ):
             return False
 
         if (
