@@ -804,6 +804,10 @@ class CustomWarningSuppressor(logging.Filter):
             # cluttered with the tags index page.
             return False
 
+        # Suppress toctree warnings about documents without titles
+        if "toctree contains reference to document" in msg and "that doesn't have a title" in msg:
+            return False
+
         return True
 
 
