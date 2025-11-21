@@ -1,0 +1,77 @@
+name: Build & Push ECR Images (PR)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  # Required: set these as repository secrets
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+  # Prefix for ECR repositories, e.g. "flyte" -> repo becomes flyte/<component>
+  ECR_REPOSITORY_PREFIX: ${{ secrets.ECR_REPOSITORY_PREFIX }}
+
+jobs:
+  build_and_push:
+    name: Build & Push to ECR
+    # Avoid attempting to use secrets on fork PRs
+    if: ${{ github.event.pull_request.head.repo.fork == false }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [datacatalog, flyteadmin, flytecopilot, flytepropeller, flytescheduler]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve repository prefix
+        id: repo-prefix
+        run: |
+          PREFIX="${ECR_REPOSITORY_PREFIX}"
+          if [ -z "$PREFIX" ]; then
+            PREFIX="flyte"
+          fi
+          echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure ECR repository exists
+        env:
+          REPOSITORY_NAME: ${{ steps.repo-prefix.outputs.prefix }}/${{ matrix.component }}
+        run: |
+          aws ecr describe-repositories --repository-names "$REPOSITORY_NAME" >/dev/null 2>&1 || \
+          aws ecr create-repository --repository-name "$REPOSITORY_NAME" >/dev/null
+
+      - name: Build and Push Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.${{ matrix.component }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ steps.repo-prefix.outputs.prefix }}/${{ matrix.component }}:pr-${{ github.event.pull_request.number }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ steps.repo-prefix.outputs.prefix }}/${{ matrix.component }}:pr-${{ github.event.pull_request.number }}-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

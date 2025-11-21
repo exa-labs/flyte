@@ -778,10 +778,13 @@ class CustomWarningSuppressor(logging.Filter):
             "Enumerated list ends without a blank line",
             'Unknown directive type "toc".',  # need to fix flytesnacks/contribute.md
             "Failed to import flytekitplugins.",  # Suppress all flytekitplugins import failures
-            "Inline literal start-string without end-string",  # Suppress RST syntax errors in upstream flytekit
         )
 
         if msg.strip().startswith(filter_out):
+            return False
+
+        # Suppress RST syntax errors in upstream flytekit
+        if "Inline literal start-string without end-string" in msg and "flytekit/configuration/__init__.py" in str(record.location):
             return False
 
         if (
