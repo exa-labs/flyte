@@ -8,7 +8,8 @@ import "flyteidl/core/tasks.proto";
 
 // RayJobSpec defines the desired state of RayJob
 message RayJob {
-  // RayClusterSpec is the cluster template to run the job
+  // RayClusterSpec is the cluster template to run the job.
+  // Mutually exclusive with cluster_selector - provide one or the other.
   RayCluster ray_cluster = 1;
   // runtime_env is base64 encoded.
   // Ray runtime environments: https://docs.ray.io/en/latest/ray-core/handling-dependencies.html#runtime-environments
@@ -20,6 +21,11 @@ message RayJob {
   // RuntimeEnvYAML represents the runtime environment configuration
   // provided as a multi-line YAML string.
   string runtime_env_yaml = 5;
+  // cluster_selector is a label selector to match an existing RayCluster.
+  // When set, the RayJob submits to an existing cluster instead of creating a new one.
+  // This enables long-lived clusters for faster iteration during development.
+  // Mutually exclusive with ray_cluster - provide one or the other.
+  map<string, string> cluster_selector = 6;
 }
 
 // Define Ray cluster defines the desired state of RayCluster
