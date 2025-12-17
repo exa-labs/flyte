@@ -1429,6 +1429,40 @@ func TestGetPropertiesRay(t *testing.T) {
 	assert.Equal(t, expected, rayJobResourceHandler.GetProperties())
 }
 
+func dummyRayCustomObjWithClusterSelector() *plugins.RayJob {
+	return &plugins.RayJob{
+		ClusterSelector: map[string]string{
+			"ray.io/cluster": "my-existing-cluster",
+		},
+		RuntimeEnvYaml: "pip:\n  - numpy",
+	}
+}
+
+func TestBuildResourceRayWithClusterSelector(t *testing.T) {
+	rayJobResourceHandler := rayJobResourceHandler{}
+	taskTemplate := dummyRayTaskTemplate("ray-id", dummyRayCustomObjWithClusterSelector())
+
+	err := config.SetK8sPluginConfig(&config.K8sPluginConfig{})
+	assert.Nil(t, err)
+
+	rayCtx := dummyRayTaskContext(taskTemplate, resourceRequirements, nil, "", serviceAccount)
+	RayResource, err := rayJobResourceHandler.BuildResource(context.TODO(), rayCtx)
+	assert.Nil(t, err)
+	assert.NotNil(t, RayResource)
+
+	ray, ok := RayResource.(*rayv1.RayJob)
+	assert.True(t, ok)
+
+	assert.NotNil(t, ray.Spec.ClusterSelector, "ClusterSelector should be set when cluster_selector is provided")
+	assert.Equal(t, map[string]string{"ray.io/cluster": "my-existing-cluster"}, ray.Spec.ClusterSelector)
+
+	assert.Nil(t, ray.Spec.RayClusterSpec, "RayClusterSpec should be nil when using cluster_selector")
+
+	assert.Equal(t, "pip:\n  - numpy", ray.Spec.RuntimeEnvYAML)
+
+	assert.NotNil(t, ray.Spec.SubmitterPodTemplate, "SubmitterPodTemplate should still be set")
+}
+
 func transformStructToStructPB(t *testing.T, obj interface{}) *structpb.Struct {
 	data, err := json.Marshal(obj)
 	assert.Nil(t, err)
