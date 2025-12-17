@@ -20,6 +20,15 @@ message RayJob {
   // RuntimeEnvYAML represents the runtime environment configuration
   // provided as a multi-line YAML string.
   string runtime_env_yaml = 5;
+  // address specifies the Ray head address to connect to for an existing cluster.
+  // When set, the RayJob submits to an existing RayCluster instead of creating a new one.
+  // The address is parsed to derive a cluster selector label.
+  // Supported formats:
+  //   - Cluster name: "my-cluster" -> clusterSelector: {"ray.io/cluster": "my-cluster"}
+  //   - Head service DNS: "my-cluster-head-svc" -> clusterSelector: {"ray.io/cluster": "my-cluster"}
+  //   - Ray client URL: "ray://my-cluster-head-svc:10001" -> clusterSelector: {"ray.io/cluster": "my-cluster"}
+  // This enables long-lived clusters for faster iteration during development.
+  string address = 6;
 }
 
 // Define Ray cluster defines the desired state of RayCluster

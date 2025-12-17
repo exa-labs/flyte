@@ -1429,6 +1429,118 @@ func TestGetPropertiesRay(t *testing.T) {
 	assert.Equal(t, expected, rayJobResourceHandler.GetProperties())
 }
 
+// TestParseAddressToClusterName tests the parseAddressToClusterName function
+// which extracts a cluster name from various Ray address formats.
+// Author: Devin AI (claude-sonnet-4-20250514)
+func TestParseAddressToClusterName(t *testing.T) {
+	testCases := []struct {
+		name          string
+		address       string
+		expected      string
+		expectError   bool
+	}{
+		{
+			name:     "simple cluster name",
+			address:  "my-cluster",
+			expected: "my-cluster",
+		},
+		{
+			name:     "head service DNS name",
+			address:  "my-cluster-head-svc",
+			expected: "my-cluster",
+		},
+		{
+			name:     "ray client URL with port",
+			address:  "ray://my-cluster-head-svc:10001",
+			expected: "my-cluster",
+		},
+		{
+			name:     "full k8s DNS with namespace",
+			address:  "my-cluster-head-svc.namespace.svc.cluster.local:10001",
+			expected: "my-cluster",
+		},
+		{
+			name:     "ray URL without port",
+			address:  "ray://my-cluster-head-svc",
+			expected: "my-cluster",
+		},
+		{
+			name:     "http URL",
+			address:  "http://my-cluster-head-svc:8265",
+			expected: "my-cluster",
+		},
+		{
+			name:     "cluster name with dashes",
+			address:  "my-long-cluster-name",
+			expected: "my-long-cluster-name",
+		},
+		{
+			name:     "cluster name with head-svc suffix and dashes",
+			address:  "my-long-cluster-name-head-svc",
+			expected: "my-long-cluster-name",
+		},
+		{
+			name:        "empty address",
+			address:     "",
+			expectError: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := parseAddressToClusterName(tc.address)
+			if tc.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tc.expected, result)
+			}
+		})
+	}
+}
+
+// TestBuildResourceRayWithAddress tests that when address is provided,
+// the RayJob uses ClusterSelector instead of creating a new RayCluster.
+// Author: Devin AI (claude-sonnet-4-20250514)
+func TestBuildResourceRayWithAddress(t *testing.T) {
+	rayJobResourceHandler := rayJobResourceHandler{}
+
+	rayJob := &plugins.RayJob{
+		RayCluster: &plugins.RayCluster{
+			HeadGroupSpec:   &plugins.HeadGroupSpec{RayStartParams: map[string]string{"num-cpus": "1"}},
+			WorkerGroupSpec: []*plugins.WorkerGroupSpec{{GroupName: workerGroupName, Replicas: 3}},
+		},
+		Address:        "ray://my-existing-cluster-head-svc:10001",
+		RuntimeEnvYaml: "pip:\n  - numpy",
+	}
+
+	taskTemplate := dummyRayTaskTemplate("ray-id", rayJob)
+
+	err := config.SetK8sPluginConfig(&config.K8sPluginConfig{})
+	assert.Nil(t, err)
+
+	rayCtx := dummyRayTaskContext(taskTemplate, resourceRequirements, nil, "", serviceAccount)
+	RayResource, err := rayJobResourceHandler.BuildResource(context.TODO(), rayCtx)
+	assert.Nil(t, err)
+	assert.NotNil(t, RayResource)
+
+	ray, ok := RayResource.(*rayv1.RayJob)
+	assert.True(t, ok)
+
+	// When address is provided, ClusterSelector should be set
+	assert.NotNil(t, ray.Spec.ClusterSelector, "ClusterSelector should be set when address is provided")
+	assert.Equal(t, map[string]string{"ray.io/cluster": "my-existing-cluster"}, ray.Spec.ClusterSelector)
+
+	// RayClusterSpec should be nil (no new cluster created)
+	assert.Nil(t, ray.Spec.RayClusterSpec, "RayClusterSpec should be nil when using address")
+
+	// RuntimeEnvYAML should still be set
+	assert.Equal(t, "pip:\n  - numpy", ray.Spec.RuntimeEnvYAML)
+
+	// SubmitterPodTemplate should still be set
+	assert.NotNil(t, ray.Spec.SubmitterPodTemplate, "SubmitterPodTemplate should still be set")
+}
+
 func transformStructToStructPB(t *testing.T, obj interface{}) *structpb.Struct {
 	data, err := json.Marshal(obj)
 	assert.Nil(t, err)
