@@ -399,15 +399,15 @@ func TestGetHTTPRequestCookieToMetadataHandler(t *testing.T) {
 	req, err := http.NewRequest("GET", "/api/v1/projects", nil)
 	assert.NoError(t, err)
 
-	accessTokenCookie, err := NewSecureCookie(accessTokenCookieNameSplitFirst, "a.b.c", cookieManager.hashKey, cookieManager.blockKey, "localhost", http.SameSiteDefaultMode)
+	accessTokenCookie, err := NewSecureCookie(accessTokenCookieNameSplitFirst, "a.b.c", cookieManager.hashKey, cookieManager.blockKey, "localhost", http.SameSiteDefaultMode, 0)
 	assert.NoError(t, err)
 	req.AddCookie(&accessTokenCookie)
 
-	accessTokenCookieSplit, err := NewSecureCookie(accessTokenCookieNameSplitSecond, ".d.e.f", cookieManager.hashKey, cookieManager.blockKey, "localhost", http.SameSiteDefaultMode)
+	accessTokenCookieSplit, err := NewSecureCookie(accessTokenCookieNameSplitSecond, ".d.e.f", cookieManager.hashKey, cookieManager.blockKey, "localhost", http.SameSiteDefaultMode, 0)
 	assert.NoError(t, err)
 	req.AddCookie(&accessTokenCookieSplit)
 
-	idCookie, err := NewSecureCookie(idTokenCookieName, "a.b.c.d.e.f", cookieManager.hashKey, cookieManager.blockKey, "localhost", http.SameSiteDefaultMode)
+	idCookie, err := NewSecureCookie(idTokenCookieName, "a.b.c.d.e.f", cookieManager.hashKey, cookieManager.blockKey, "localhost", http.SameSiteDefaultMode, 0)
 	assert.NoError(t, err)
 	req.AddCookie(&idCookie)
 

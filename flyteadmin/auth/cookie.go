@@ -57,21 +57,27 @@ func HashCsrfState(csrf string) string {
 	return hash
 }
 
-func NewSecureCookie(cookieName, value string, hashKey, blockKey []byte, domain string, sameSiteMode http.SameSite) (http.Cookie, error) {
+func NewSecureCookie(cookieName, value string, hashKey, blockKey []byte, domain string, sameSiteMode http.SameSite, maxAge time.Duration) (http.Cookie, error) {
 	s := securecookie.New(hashKey, blockKey)
 	encoded, err := s.Encode(cookieName, value)
 	if err != nil {
 		return http.Cookie{}, errors.Wrapf(ErrSecureCookie, err, "Error creating secure cookie")
 	}
 
-	return http.Cookie{
+	cookie := http.Cookie{
 		Name:     cookieName,
 		Value:    encoded,
 		Domain:   domain,
 		SameSite: sameSiteMode,
 		HttpOnly: true,
 		Secure:   !config.GetConfig().Security.InsecureCookieHeader,
-	}, nil
+	}
+
+	if maxAge > 0 {
+		cookie.MaxAge = int(maxAge.Seconds())
+	}
+
+	return cookie, nil
 }
 
 func retrieveSecureCookie(ctx context.Context, request *http.Request, cookieName string, hashKey, blockKey []byte) (string, error) {

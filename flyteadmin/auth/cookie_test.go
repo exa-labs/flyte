@@ -61,7 +61,7 @@ func TestSecureCookieLifecycle(t *testing.T) {
 			})
 
 			// Create a secure cookie
-			cookie, err := NewSecureCookie("choc", "chip", hashKey, blockKey, "localhost", http.SameSiteLaxMode)
+			cookie, err := NewSecureCookie("choc", "chip", hashKey, blockKey, "localhost", http.SameSiteLaxMode, 0)
 			assert.NoError(t, err)
 
 			// Validate the Secure attribute of the cookie

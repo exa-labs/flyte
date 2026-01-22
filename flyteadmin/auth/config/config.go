@@ -247,8 +247,9 @@ const (
 )
 
 type CookieSettings struct {
-	SameSitePolicy SameSite `json:"sameSitePolicy" pflag:",OPTIONAL: Allows you to declare if your cookie should be restricted to a first-party or same-site context.Wrapper around http.SameSite."`
-	Domain         string   `json:"domain" pflag:",OPTIONAL: Allows you to set the domain attribute on the auth cookies."`
+	SameSitePolicy SameSite        `json:"sameSitePolicy" pflag:",OPTIONAL: Allows you to declare if your cookie should be restricted to a first-party or same-site context.Wrapper around http.SameSite."`
+	Domain         string          `json:"domain" pflag:",OPTIONAL: Allows you to set the domain attribute on the auth cookies."`
+	MaxAge         config.Duration `json:"maxAge" pflag:",OPTIONAL: Sets the max age of auth cookies. If unset, cookies are session cookies and may be cleared by the browser at any time."`
 }
 
 type OpenIDOptions struct {
