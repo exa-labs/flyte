@@ -116,6 +116,53 @@ func (_c *Client_GetClient_Call) RunAndReturn(run func() client.Client) *Client_
 	return _c
 }
 
+// GetAPIReader provides a mock function with given fields:
+func (_m *Client) GetAPIReader() client.Reader {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetAPIReader")
+	}
+
+	var r0 client.Reader
+	if rf, ok := ret.Get(0).(func() client.Reader); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(client.Reader)
+		}
+	}
+
+	return r0
+}
+
+// Client_GetAPIReader_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetAPIReader'
+type Client_GetAPIReader_Call struct {
+	*mock.Call
+}
+
+// GetAPIReader is a helper method to define mock.On call
+func (_e *Client_Expecter) GetAPIReader() *Client_GetAPIReader_Call {
+	return &Client_GetAPIReader_Call{Call: _e.mock.On("GetAPIReader")}
+}
+
+func (_c *Client_GetAPIReader_Call) Run(run func()) *Client_GetAPIReader_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *Client_GetAPIReader_Call) Return(_a0 client.Reader) *Client_GetAPIReader_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Client_GetAPIReader_Call) RunAndReturn(run func() client.Reader) *Client_GetAPIReader_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewClient creates a new instance of Client. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewClient(t interface {
