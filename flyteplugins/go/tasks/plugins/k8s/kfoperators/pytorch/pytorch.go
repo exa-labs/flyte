@@ -144,6 +144,17 @@ func (p pytorchOperatorResourceHandler) BuildResource(ctx context.Context, taskC
 			"Invalid TaskSpecification, unsupported task template version [%v] key", taskTemplate.GetTaskTypeVersion())
 	}
 
+	// Apply config-level defaults for RunPolicy fields the task didn't set.
+	cfg := common.GetConfig()
+	if runPolicy.CleanPodPolicy == nil && cfg.DefaultCleanPodPolicy != "" {
+		policy := kubeflowv1.CleanPodPolicy(cfg.DefaultCleanPodPolicy)
+		runPolicy.CleanPodPolicy = &policy
+	}
+	if runPolicy.TTLSecondsAfterFinished == nil && cfg.DefaultTTLSecondsAfterFinished >= 0 {
+		ttl := cfg.DefaultTTLSecondsAfterFinished
+		runPolicy.TTLSecondsAfterFinished = &ttl
+	}
+
 	jobSpec := kubeflowv1.PyTorchJobSpec{}
 	replicaSpecs := map[kubeflowv1.ReplicaType]*kubeflowv1.ReplicaSpec{
 		kubeflowv1.PyTorchJobReplicaTypeMaster: masterReplicaSpec,

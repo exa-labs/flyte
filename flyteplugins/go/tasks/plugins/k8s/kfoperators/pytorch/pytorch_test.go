@@ -993,6 +993,81 @@ func TestBuildResourcePytorchV1WithRunPolicy(t *testing.T) {
 	}
 }
 
+func TestBuildResourcePytorchV1WithConfigDefaults(t *testing.T) {
+	// When the task spec does not set a RunPolicy the config-level defaults should
+	// be applied so that the training operator cleans up pods on its own.
+	err := common.SetConfig(&common.Config{
+		DefaultCleanPodPolicy:          "All",
+		DefaultTTLSecondsAfterFinished: 3600,
+	})
+	assert.NoError(t, err)
+	defer func() {
+		// Restore default config for other tests.
+		_ = common.SetConfig(&common.Config{
+			DefaultTTLSecondsAfterFinished: -1,
+		})
+	}()
+
+	taskConfig := &kfplugins.DistributedPyTorchTrainingTask{
+		WorkerReplicas: &kfplugins.DistributedPyTorchTrainingReplicaSpec{
+			Replicas: 2,
+		},
+		// No RunPolicy — config defaults should kick in.
+	}
+
+	pytorchResourceHandler := pytorchOperatorResourceHandler{}
+	taskTemplate := dummyPytorchTaskTemplate("config-defaults", taskConfig)
+	taskTemplate.TaskTypeVersion = 1
+
+	res, err := pytorchResourceHandler.BuildResource(context.TODO(), dummyPytorchTaskContext(taskTemplate, resourceRequirements, nil, "", k8s.PluginState{}))
+	assert.NoError(t, err)
+	assert.NotNil(t, res)
+
+	pytorchJob, ok := res.(*kubeflowv1.PyTorchJob)
+	assert.True(t, ok)
+	assert.Equal(t, kubeflowv1.CleanPodPolicyAll, *pytorchJob.Spec.RunPolicy.CleanPodPolicy)
+	assert.Equal(t, int32(3600), *pytorchJob.Spec.RunPolicy.TTLSecondsAfterFinished)
+}
+
+func TestBuildResourcePytorchV1WithConfigDefaultsNoOverrideExplicitPolicy(t *testing.T) {
+	// When the task spec explicitly sets a RunPolicy the config defaults must NOT
+	// override the task-level values.
+	err := common.SetConfig(&common.Config{
+		DefaultCleanPodPolicy:          "Running",
+		DefaultTTLSecondsAfterFinished: 7200,
+	})
+	assert.NoError(t, err)
+	defer func() {
+		_ = common.SetConfig(&common.Config{
+			DefaultTTLSecondsAfterFinished: -1,
+		})
+	}()
+
+	taskConfig := &kfplugins.DistributedPyTorchTrainingTask{
+		WorkerReplicas: &kfplugins.DistributedPyTorchTrainingReplicaSpec{
+			Replicas: 2,
+		},
+		RunPolicy: &kfplugins.RunPolicy{
+			CleanPodPolicy:          kfplugins.CleanPodPolicy_CLEANPOD_POLICY_ALL,
+			TtlSecondsAfterFinished: 10000,
+		},
+	}
+
+	pytorchResourceHandler := pytorchOperatorResourceHandler{}
+	taskTemplate := dummyPytorchTaskTemplate("config-no-override", taskConfig)
+	taskTemplate.TaskTypeVersion = 1
+
+	res, err := pytorchResourceHandler.BuildResource(context.TODO(), dummyPytorchTaskContext(taskTemplate, resourceRequirements, nil, "", k8s.PluginState{}))
+	assert.NoError(t, err)
+	assert.NotNil(t, res)
+
+	pytorchJob, ok := res.(*kubeflowv1.PyTorchJob)
+	assert.True(t, ok)
+	// Task-level values should win over config defaults.
+	assert.Equal(t, kubeflowv1.CleanPodPolicyAll, *pytorchJob.Spec.RunPolicy.CleanPodPolicy)
+	assert.Equal(t, int32(10000), *pytorchJob.Spec.RunPolicy.TTLSecondsAfterFinished)
+}
+
 func TestBuildResourcePytorchV1WithOnlyWorkerSpec(t *testing.T) {
 	taskConfigs := []*kfplugins.DistributedPyTorchTrainingTask{
 		{
