@@ -43,11 +43,11 @@ require (
 	gorm.io/driver/sqlite v1.5.4
 	gorm.io/gorm v1.25.4
 	gotest.tools v2.2.0+incompatible
-	k8s.io/api v0.28.2
-	k8s.io/apimachinery v0.28.2
+	k8s.io/api v0.29.3
+	k8s.io/apimachinery v0.29.3
 	k8s.io/client-go v0.28.1
 	k8s.io/utils v0.0.0-20230406110748-d93618cff8a2
-	sigs.k8s.io/controller-runtime v0.0.0-00010101000000-000000000000
+	sigs.k8s.io/controller-runtime v0.17.2
 )
 
 require (
@@ -157,8 +157,4 @@ replace (
 	github.com/flyteorg/flyte/flyteplugins => ../flyteplugins
 	github.com/flyteorg/flyte/flytepropeller => ../flytepropeller
 	github.com/flyteorg/flyte/flytestdlib => ../flytestdlib
-	k8s.io/api => k8s.io/api v0.28.2
-	k8s.io/apimachinery => k8s.io/apimachinery v0.28.2
-	k8s.io/client-go => k8s.io/client-go v0.28.2
-	sigs.k8s.io/controller-runtime => sigs.k8s.io/controller-runtime v0.16.2
 )
