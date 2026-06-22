@@ -158,6 +158,7 @@ jobs:
             ${{ steps.login-ecr.outputs.registry }}/${{ steps.ecr-prefix.outputs.prefix }}/flyte:${{ steps.tag.outputs.version }}
             ${{ steps.login-ecr.outputs.registry }}/${{ steps.ecr-prefix.outputs.prefix }}/flyte:latest
           build-args: |
+            FLYTECONSOLE_IMAGE=${{ steps.login-ecr.outputs.registry }}/exa-labs/flyteconsole:${{ env.FLYTECONSOLE_VERSION || 'latest' }}
             FLYTECONSOLE_VERSION=${{ env.FLYTECONSOLE_VERSION }}
             FLYTE_VERSION=${{ env.FLYTE_VERSION }}
           file: Dockerfile
