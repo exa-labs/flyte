@@ -222,8 +222,8 @@ helm install gateway bitnami/contour -n flyte
 | flyteconsole.ga.enabled | bool | `false` |  |
 | flyteconsole.ga.tracking_id | string | `"G-0QW4DJWJ20"` |  |
 | flyteconsole.image.pullPolicy | string | `"IfNotPresent"` |  |
-| flyteconsole.image.repository | string | `"cr.flyte.org/flyteorg/flyteconsole"` | Docker image for Flyteconsole deployment |
-| flyteconsole.image.tag | string | `"v1.20.0"` |  |
+| flyteconsole.image.repository | string | `"472386928882.dkr.ecr.us-west-2.amazonaws.com/exa-labs/flyteconsole"` | Docker image for Flyteconsole deployment |
+| flyteconsole.image.tag | string | `"latest"` |  |
 | flyteconsole.imagePullSecrets | list | `[]` | ImagePullSecrets to assign to the Flyteconsole deployment |
 | flyteconsole.livenessProbe | object | `{}` |  |
 | flyteconsole.nodeSelector | object | `{}` | nodeSelector for Flyteconsole deployment |

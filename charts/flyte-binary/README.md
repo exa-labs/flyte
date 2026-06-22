@@ -22,6 +22,8 @@ Chart for basic single Flyte executable deployment
 | commonAnnotations | object | `{}` |  |
 | commonLabels | object | `{}` |  |
 | configuration.annotations | object | `{}` |  |
+| configuration.auth.accessTokenLifespan | string | `"30m"` |  |
+| configuration.auth.authorizationCodeLifespan | string | `"5m"` |  |
 | configuration.auth.authorizedUris | list | `[]` |  |
 | configuration.auth.clientSecretsExternalSecretRef | string | `""` |  |
 | configuration.auth.enableAuthServer | bool | `true` |  |
@@ -36,6 +38,7 @@ Chart for basic single Flyte executable deployment
 | configuration.auth.oidc.baseUrl | string | `""` |  |
 | configuration.auth.oidc.clientId | string | `""` |  |
 | configuration.auth.oidc.clientSecret | string | `""` |  |
+| configuration.auth.refreshTokenLifespan | string | `"60m"` |  |
 | configuration.co-pilot.image.repository | string | `"cr.flyte.org/flyteorg/flytecopilot"` |  |
 | configuration.co-pilot.image.tag | string | `"v1.15.3"` |  |
 | configuration.connectorService.defaultConnector.defaultTimeout | string | `"10s"` |  |

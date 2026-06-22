@@ -40,8 +40,8 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-west-2' }}
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -52,16 +52,9 @@ jobs:
         run: |
           PREFIX="${ECR_REPOSITORY_PREFIX}"
           if [ -z "$PREFIX" ]; then
-            PREFIX="flyte"
+            PREFIX="exa-hephaestus"
           fi
           echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
-
-      - name: Ensure ECR repository exists
-        env:
-          REPOSITORY_NAME: ${{ steps.repo-prefix.outputs.prefix }}/${{ matrix.component }}
-        run: |
-          aws ecr describe-repositories --repository-names "$REPOSITORY_NAME" >/dev/null 2>&1 || \
-          aws ecr create-repository --repository-name "$REPOSITORY_NAME" >/dev/null
 
       - name: Build and Push Image
         uses: docker/build-push-action@v6
