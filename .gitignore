@@ -21,6 +21,7 @@ __pycache__/
 /charts/flyteagent/Chart.lock
 /charts/flyte-deps/Chart.lock
 /charts/flyte-core/Chart.lock
+/charts/flyte-sandbox/Chart.lock
 **/*.bak-
 .python-version
 dist/

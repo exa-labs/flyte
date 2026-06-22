@@ -17,27 +17,17 @@ export PATH=$HELM_INSTALL_DIR:$PATH
 
 helm version
 
-# Pre-add chart repositories so helm dep build can resolve them
-helm repo add bitnami https://charts.bitnami.com/bitnami || true
-helm repo add dask https://helm.dask.org || true
-helm repo add spark-operator https://kubeflow.github.io/spark-operator || true
-helm repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/ || true
-helm repo add twuni https://helm.twun.io/ || true
-helm repo update || true
-
 # All the values files to be built
 DEPLOYMENT_CORE=${1:-eks gcp}
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 HELM_CAPABILITIES="-a rbac.authorization.k8s.io/v1 -a networking.k8s.io/v1/Ingress -a apiextensions.k8s.io/v1/CustomResourceDefinition"
 
-# Use 'helm dep build' instead of 'helm dep update' to rebuild from Chart.yaml
-# rather than Chart.lock, avoiding stale URL-based cache hash misses in CI
-helm dep build ${DIR}/../charts/flyte-deps/
-helm dep build ${DIR}/../charts/flyte-core/
-helm dep build ${DIR}/../charts/flyte-binary/
-helm dep build ${DIR}/../charts/flyte-sandbox/
-helm dep build ${DIR}/../charts/flyte/
+helm dep update ${DIR}/../charts/flyte-deps/
+helm dep update ${DIR}/../charts/flyte-core/
+helm dep update ${DIR}/../charts/flyte-binary/
+helm dep update ${DIR}/../charts/flyte-sandbox/
+helm dep update ${DIR}/../charts/flyte/
 
 helm template flyte -n flyte ${DIR}/../charts/flyte/ -f ${DIR}/../charts/flyte/values.yaml ${HELM_CAPABILITIES} --debug >${DIR}/../deployment/sandbox/flyte_helm_generated.yaml
 
