@@ -6,7 +6,7 @@ echo "Generating Helm"
 
 HELM_SKIP_INSTALL=${HELM_SKIP_INSTALL:-false}
 
-export HELM_INSTALL_DIR=${TMPDIR}
+export HELM_INSTALL_DIR=${TMPDIR:-/tmp}
 
 if [ "${HELM_SKIP_INSTALL}" != "true" ]; then
 	# See https://github.com/helm/helm/issues/13324 for a breaking change in latest version of helm
@@ -16,6 +16,14 @@ fi
 export PATH=$HELM_INSTALL_DIR:$PATH
 
 helm version
+
+# Pre-add chart repositories so helm dep update can resolve them
+helm repo add bitnami https://charts.bitnami.com/bitnami || true
+helm repo add dask https://helm.dask.org || true
+helm repo add spark-operator https://kubeflow.github.io/spark-operator || true
+helm repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/ || true
+helm repo add twuni https://helm.twun.io/ || true
+helm repo update
 
 # All the values files to be built
 DEPLOYMENT_CORE=${1:-eks gcp}
