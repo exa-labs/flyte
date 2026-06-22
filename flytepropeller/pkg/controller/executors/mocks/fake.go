@@ -43,6 +43,10 @@ func (f *FakeInformers) GetInformer(ctx context.Context, obj client.Object, opts
 	return &controllertest.FakeInformer{}, nil
 }
 
+func (f *FakeInformers) RemoveInformer(ctx context.Context, obj client.Object) error {
+	return nil
+}
+
 func NewFakeKubeClient() *Client {
 	c := Client{}
 	c.EXPECT().GetClient().Return(fake.NewClientBuilder().WithRuntimeObjects().Build())
