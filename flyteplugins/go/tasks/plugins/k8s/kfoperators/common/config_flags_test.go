@@ -113,4 +113,32 @@ func TestConfig_SetFlags(t *testing.T) {
 			}
 		})
 	})
+	t.Run("Test_defaultCleanPodPolicy", func(t *testing.T) {
+
+		t.Run("Override", func(t *testing.T) {
+			testValue := "All"
+
+			cmdFlags.Set("defaultCleanPodPolicy", testValue)
+			if vString, err := cmdFlags.GetString("defaultCleanPodPolicy"); err == nil {
+				testDecodeJson_Config(t, fmt.Sprintf("%v", vString), &actual.DefaultCleanPodPolicy)
+
+			} else {
+				assert.FailNow(t, err.Error())
+			}
+		})
+	})
+	t.Run("Test_defaultTTLSecondsAfterFinished", func(t *testing.T) {
+
+		t.Run("Override", func(t *testing.T) {
+			testValue := "3600"
+
+			cmdFlags.Set("defaultTTLSecondsAfterFinished", testValue)
+			if vInt32, err := cmdFlags.GetInt32("defaultTTLSecondsAfterFinished"); err == nil {
+				testDecodeJson_Config(t, fmt.Sprintf("%v", vInt32), &actual.DefaultTTLSecondsAfterFinished)
+
+			} else {
+				assert.FailNow(t, err.Error())
+			}
+		})
+	})
 }
