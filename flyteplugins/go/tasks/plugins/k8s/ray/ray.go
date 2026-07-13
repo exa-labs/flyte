@@ -124,9 +124,105 @@ func (rayJobResourceHandler) BuildResource(ctx context.Context, taskCtx pluginsC
 	return rayjob, err
 }
 
+// parseAddressToClusterName extracts a cluster name from a Ray address string.
+// Supported formats:
+//   - Cluster name: "my-cluster" -> "my-cluster"
+//   - Head service DNS: "my-cluster-head-svc" -> "my-cluster"
+//   - Ray client URL: "ray://my-cluster-head-svc:10001" -> "my-cluster"
+//   - Full k8s DNS: "my-cluster-head-svc.namespace.svc.cluster.local:10001" -> "my-cluster"
+//
+// Author: Devin AI (claude-sonnet-4-20250514)
+func parseAddressToClusterName(address string) (string, error) {
+	if address == "" {
+		return "", fmt.Errorf("address is empty")
+	}
+
+	// Handle URL format (ray://host:port or http://host:port)
+	host := address
+	if strings.Contains(address, "://") {
+		parts := strings.SplitN(address, "://", 2)
+		if len(parts) == 2 {
+			host = parts[1]
+		}
+	}
+
+	// Remove port if present
+	if colonIdx := strings.LastIndex(host, ":"); colonIdx != -1 {
+		// Make sure it's a port (not part of IPv6)
+		if !strings.Contains(host[colonIdx:], "]") {
+			host = host[:colonIdx]
+		}
+	}
+
+	// Remove path if present
+	if slashIdx := strings.Index(host, "/"); slashIdx != -1 {
+		host = host[:slashIdx]
+	}
+
+	// Take the first DNS label (before any dots)
+	if dotIdx := strings.Index(host, "."); dotIdx != -1 {
+		host = host[:dotIdx]
+	}
+
+	// Strip "-head-svc" suffix if present
+	clusterName := strings.TrimSuffix(host, "-head-svc")
+
+	if clusterName == "" {
+		return "", fmt.Errorf("could not parse cluster name from address: %s", address)
+	}
+
+	return clusterName, nil
+}
+
 func constructRayJob(taskCtx pluginsCore.TaskExecutionContext, rayJob *plugins.RayJob, objectMeta *metav1.ObjectMeta, taskPodSpec v1.PodSpec, headNodeRayStartParams map[string]string, primaryContainerIdx int, primaryContainer v1.Container) (*rayv1.RayJob, error) {
-	enableIngress := true
 	cfg := GetConfig()
+
+	// Handle runtime_env conversion (needed for both modes)
+	var runtimeEnvYaml string
+	var err error
+	runtimeEnvYaml = rayJob.GetRuntimeEnvYaml()
+	// If runtime_env exists but runtime_env_yaml does not, convert runtime_env to runtime_env_yaml
+	if rayJob.GetRuntimeEnv() != "" && rayJob.GetRuntimeEnvYaml() == "" {
+		runtimeEnvYaml, err = convertBase64RuntimeEnvToYaml(rayJob.GetRuntimeEnv())
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	submitterPodSpec := taskPodSpec.DeepCopy()
+	submitterPodTemplate := buildSubmitterPodTemplate(submitterPodSpec, objectMeta, taskCtx)
+
+	// Check if address is provided - if so, use existing cluster mode
+	if address := rayJob.GetAddress(); address != "" {
+		clusterName, err := parseAddressToClusterName(address)
+		if err != nil {
+			return nil, flyteerr.Errorf(flyteerr.BadTaskSpecification, "invalid Ray address for cluster selection: %v", err)
+		}
+
+		// Use ray.io/cluster label to select the existing cluster
+		clusterSelector := map[string]string{
+			"ray.io/cluster": clusterName,
+		}
+
+		jobSpec := rayv1.RayJobSpec{
+			ClusterSelector:      clusterSelector,
+			Entrypoint:           strings.Join(primaryContainer.Args, " "),
+			RuntimeEnvYAML:       runtimeEnvYaml,
+			SubmitterPodTemplate: &submitterPodTemplate,
+		}
+
+		return &rayv1.RayJob{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       KindRayJob,
+				APIVersion: rayv1.SchemeGroupVersion.String(),
+			},
+			Spec:       jobSpec,
+			ObjectMeta: *objectMeta,
+		}, nil
+	}
+
+	// Default mode: create a new RayCluster
+	enableIngress := true
 
 	headPodSpec := taskPodSpec.DeepCopy()
 	headPodTemplate, err := buildHeadPodTemplate(
@@ -215,20 +311,6 @@ func constructRayJob(taskCtx pluginsCore.TaskExecutionContext, rayJob *plugins.R
 	if rayJob.GetShutdownAfterJobFinishes() {
 		shutdownAfterJobFinishes = true
 		ttlSecondsAfterFinished = &rayJob.TtlSecondsAfterFinished
-	}
-
-	submitterPodSpec := taskPodSpec.DeepCopy()
-	submitterPodTemplate := buildSubmitterPodTemplate(submitterPodSpec, objectMeta, taskCtx)
-
-	// TODO: This is for backward compatibility. Remove this block once runtime_env is removed from ray proto.
-	var runtimeEnvYaml string
-	runtimeEnvYaml = rayJob.GetRuntimeEnvYaml()
-	// If runtime_env exists but runtime_env_yaml does not, convert runtime_env to runtime_env_yaml
-	if rayJob.GetRuntimeEnv() != "" && rayJob.GetRuntimeEnvYaml() == "" {
-		runtimeEnvYaml, err = convertBase64RuntimeEnvToYaml(rayJob.GetRuntimeEnv())
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	jobSpec := rayv1.RayJobSpec{
