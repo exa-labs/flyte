@@ -22,6 +22,13 @@ type Client interface {
 
 	// GetCache returns a cache.Cache
 	GetCache() cache.Cache
+
+	// GetAPIReader returns a reader that bypasses the local informer cache and
+	// reads directly from the API server. Use this on paths where a stale cache
+	// could cause silent correctness bugs (for example, when checking whether a
+	// finalizer is still attached to an object that was just modified by an
+	// external controller).
+	GetAPIReader() client.Reader
 }
 
 var NewCache = func(config *rest.Config, options cache.Options) (cache.Cache, error) {

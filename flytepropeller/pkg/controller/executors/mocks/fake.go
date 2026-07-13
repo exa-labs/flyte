@@ -49,7 +49,9 @@ func (f *FakeInformers) RemoveInformer(ctx context.Context, obj client.Object) e
 
 func NewFakeKubeClient() *Client {
 	c := Client{}
-	c.EXPECT().GetClient().Return(fake.NewClientBuilder().WithRuntimeObjects().Build())
+	fakeClient := fake.NewClientBuilder().WithRuntimeObjects().Build()
+	c.EXPECT().GetClient().Return(fakeClient)
 	c.EXPECT().GetCache().Return(&FakeInformers{})
+	c.EXPECT().GetAPIReader().Return(fakeClient)
 	return &c
 }

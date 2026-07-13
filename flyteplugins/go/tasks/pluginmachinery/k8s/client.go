@@ -13,8 +13,9 @@ import (
 )
 
 type kubeClient struct {
-	client client.Client
-	cache  cache.Cache
+	client    client.Client
+	cache     cache.Cache
+	apiReader client.Reader
 }
 
 func (k *kubeClient) GetClient() client.Client {
@@ -23,6 +24,16 @@ func (k *kubeClient) GetClient() client.Client {
 
 func (k *kubeClient) GetCache() cache.Cache {
 	return k.cache
+}
+
+// GetAPIReader returns a reader that bypasses the local cache. If a separate
+// cacheless reader was not configured, the read-write client is returned —
+// it already issues direct API calls.
+func (k *kubeClient) GetAPIReader() client.Reader {
+	if k.apiReader != nil {
+		return k.apiReader
+	}
+	return k.client
 }
 
 func newKubeClient(c client.Client, cache cache.Cache) core.KubeClient {

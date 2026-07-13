@@ -37,6 +37,13 @@ func (k KubeClientObj) GetCache() cache.Cache {
 	return nil
 }
 
+// GetAPIReader returns the underlying client. KubeClientObj does not maintain
+// a separate informer cache, so reads through GetClient already hit the API
+// server directly.
+func (k KubeClientObj) GetAPIReader() client.Reader {
+	return k.client
+}
+
 func NewKubeClientObj(c client.Client) core.KubeClient {
 	return &KubeClientObj{
 		client: c,

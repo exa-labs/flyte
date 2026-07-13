@@ -13,4 +13,9 @@ type KubeClient interface {
 
 	// GetCache returns a cache.Cache
 	GetCache() cache.Cache
+
+	// GetAPIReader returns a reader that bypasses the local informer cache and
+	// reads directly from the API server. Use this on paths where a stale cache
+	// could cause silent correctness bugs (e.g. clearing finalizers).
+	GetAPIReader() client.Reader
 }

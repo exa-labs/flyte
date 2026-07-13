@@ -504,10 +504,16 @@ func (e *PluginManager) Finalize(ctx context.Context, tCtx pluginsCore.TaskExecu
 	// Attempt to cleanup finalizer so that the object may be deleted/garbage collected. We try to clear it for all
 	// objects, regardless of whether or not InjectFinalizer is configured to handle all cases where InjectFinalizer is
 	// enabled/disabled during object execution.
+	//
+	// The Get below intentionally uses GetAPIReader to bypass the informer cache. The cache can lag the API server
+	// (and lags much longer when the watch verb is missing in RBAC and the reflector falls back to LIST resyncs).
+	// A stale cached read can show a copy whose Finalizers list does not contain ours even though the API server
+	// still has it; clearFinalizer below would then see RemoveFinalizer == false and silently skip the patch,
+	// leaving the resource permanently stuck Terminating.
 	var lastErr error
 	_ = wait.ExponentialBackoff(retryBackoff, func() (bool, error) {
 		lastErr = nil
-		if err := e.kubeClient.GetClient().Get(ctx, nsName, o); err != nil {
+		if err := e.kubeClient.GetAPIReader().Get(ctx, nsName, o); err != nil {
 			if isK8sObjectNotExists(err) {
 				return true, nil
 			}
