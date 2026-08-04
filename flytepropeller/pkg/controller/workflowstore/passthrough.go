@@ -2,9 +2,12 @@ package workflowstore
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	kubeerrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -36,7 +39,6 @@ func (p *passthroughWorkflowStore) Get(ctx context.Context, namespace, name stri
 		// The FlyteWorkflow resource may no longer exist, in which case we stop
 		// processing.
 		if kubeerrors.IsNotFound(err) {
-			logger.Warningf(ctx, "Workflow not found in cache.")
 			return nil, ErrWorkflowNotFound
 		}
 		return nil, err
@@ -44,37 +46,7 @@ func (p *passthroughWorkflowStore) Get(ctx context.Context, namespace, name stri
 	return w, nil
 }
 
-func (p *passthroughWorkflowStore) UpdateStatus(ctx context.Context, workflow *v1alpha1.FlyteWorkflow, priorityClass PriorityClass) (
-	newWF *v1alpha1.FlyteWorkflow, err error) {
-	p.metrics.workflowUpdateCount.Inc()
-	// Something has changed. Lets save
-	logger.Debugf(ctx, "Observed FlyteWorkflow State change. [%v] -> [%v]", workflow.Status.Phase.String(), workflow.Status.Phase.String())
-	t := p.metrics.workflowUpdateLatency.Start()
-	newWF, err = p.wfClientSet.FlyteWorkflows(workflow.Namespace).Update(ctx, workflow, v1.UpdateOptions{})
-	if err != nil {
-		if kubeerrors.IsNotFound(err) {
-			return nil, nil
-		}
-
-		if kubeerrors.IsConflict(err) {
-			p.metrics.workflowUpdateConflictCount.Inc()
-		}
-		if kubeerrors.IsRequestEntityTooLargeError(err) {
-			p.metrics.workflowTooLarge.Inc()
-			return nil, ErrWorkflowToLarge
-		}
-		p.metrics.workflowUpdateFailedCount.Inc()
-		logger.Errorf(ctx, "Failed to update workflow status. Error [%v]", err)
-		return nil, err
-	}
-	t.Stop()
-	p.metrics.workflowUpdateSuccessCount.Inc()
-	logger.Debugf(ctx, "Updated workflow status.")
-	return newWF, nil
-}
-
-func (p *passthroughWorkflowStore) Update(ctx context.Context, workflow *v1alpha1.FlyteWorkflow, priorityClass PriorityClass) (
-	newWF *v1alpha1.FlyteWorkflow, err error) {
+func (p *passthroughWorkflowStore) Update(ctx context.Context, workflow *v1alpha1.FlyteWorkflow) (newWF *v1alpha1.FlyteWorkflow, err error) {
 	// If the workflow has any managed fields setting the array to one empty ManagedField clears them in the CRD.
 	// FlyteWorkflow CRDs are only managed by a single FlytePropeller instance and therefore the managed fields paradigm
 	// does not add useful functionality. Clearing them reduces CRD size, improving etcd I/O performance.
@@ -95,7 +67,12 @@ func (p *passthroughWorkflowStore) Update(ctx context.Context, workflow *v1alpha
 		if kubeerrors.IsConflict(err) {
 			p.metrics.workflowUpdateConflictCount.Inc()
 		}
-		if kubeerrors.IsRequestEntityTooLargeError(err) {
+		// Check for request too large errors from both K8s API server and etcd
+		// We check both the error type and string because the error might lose its type
+		// information when propagated through the Kubernetes API server
+		if kubeerrors.IsRequestEntityTooLargeError(err) ||
+			errors.Is(err, rpctypes.ErrRequestTooLarge) ||
+			strings.Contains(err.Error(), "etcdserver: request is too large") {
 			p.metrics.workflowTooLarge.Inc()
 			return nil, ErrWorkflowToLarge
 		}

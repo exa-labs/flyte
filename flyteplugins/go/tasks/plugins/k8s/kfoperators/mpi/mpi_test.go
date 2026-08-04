@@ -255,6 +255,18 @@ func dummyMPIJobResource(mpiResourceHandler mpiOperatorResourceHandler,
 			Time: now.Add(3 * time.Minute),
 		},
 	}
+	jobSuspended := kubeflowv1.JobCondition{
+		Type:    kubeflowv1.JobSuspended,
+		Status:  corev1.ConditionTrue,
+		Reason:  "MPIJobSuspended",
+		Message: "MPIJob the-job is suspended.",
+		LastUpdateTime: v1.Time{
+			Time: now.Add(time.Minute),
+		},
+		LastTransitionTime: v1.Time{
+			Time: now.Add(time.Minute),
+		},
+	}
 
 	switch conditionType {
 	case kubeflowv1.JobCreated:
@@ -284,6 +296,11 @@ func dummyMPIJobResource(mpiResourceHandler mpiOperatorResourceHandler,
 			jobRunningInactive,
 			jobFailed,
 			jobRestarting,
+		}
+	case kubeflowv1.JobSuspended:
+		jobConditions = []kubeflowv1.JobCondition{
+			jobCreated,
+			jobSuspended,
 		}
 	}
 
@@ -546,6 +563,27 @@ func TestGetTaskPhase(t *testing.T) {
 	assert.NotNil(t, taskPhase.Info())
 	assert.Nil(t, err)
 
+	taskPhase, err = mpiResourceHandler.GetTaskPhase(ctx, taskCtx, dummyMPIJobResourceCreator(kubeflowv1.JobSuspended))
+	assert.NoError(t, err)
+	assert.Equal(t, pluginsCore.PhaseQueued, taskPhase.Phase())
+	assert.Equal(t, "Suspended", taskPhase.Reason())
+	assert.NotNil(t, taskPhase.Info())
+	assert.Nil(t, err)
+
+	// Resume-from-suspended lifecycle: Created -> Suspended -> Running.
+	resumedMPIJob := dummyMPIJobResourceCreator(kubeflowv1.JobSuspended)
+	resumedMPIJob.Status.Conditions = append(resumedMPIJob.Status.Conditions, kubeflowv1.JobCondition{
+		Type:               kubeflowv1.JobRunning,
+		Status:             corev1.ConditionTrue,
+		Reason:             "MPIJobRunning",
+		Message:            "MPIJob the-job is running.",
+		LastTransitionTime: v1.Time{Time: time.Now().Add(time.Minute)},
+	})
+	taskPhase, err = mpiResourceHandler.GetTaskPhase(ctx, taskCtx, resumedMPIJob)
+	assert.NoError(t, err)
+	assert.Equal(t, pluginsCore.PhaseRunning, taskPhase.Phase())
+	assert.NotNil(t, taskPhase.Info())
+
 	// Training operator did not modify the job even though it is not suspended
 	mpiJob := dummyMPIJobResourceCreator(kubeflowv1.JobCreated)
 	mpiJob.CreationTimestamp = v1.Time{Time: time.Now().Add(-time.Hour)}
@@ -597,7 +635,7 @@ func TestGetLogs(t *testing.T) {
 	mpiJob := dummyMPIJobResource(mpiResourceHandler, workers, launcher, slots, kubeflowv1.JobRunning)
 	taskTemplate := dummyMPITaskTemplate("", dummyMPICustomObj(workers, launcher, slots))
 	taskCtx := dummyMPITaskContext(taskTemplate, resourceRequirements, nil, k8s.PluginState{})
-	jobLogs, err := common.GetLogs(taskCtx, common.MPITaskType, mpiJob.ObjectMeta, taskTemplate, false, workers, launcher, 0, 0)
+	jobLogs, err := common.GetLogs(taskCtx, common.MPITaskType, mpiJob.ObjectMeta, taskTemplate, false, workers, launcher, 0, 0, kubeflowv1.MPIJobDefaultContainerName)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(jobLogs))
 	assert.Equal(t, fmt.Sprintf("k8s.com/#!/log/%s/%s-worker-0/pod?namespace=mpi-namespace", jobNamespace, jobName), jobLogs[0].GetUri())

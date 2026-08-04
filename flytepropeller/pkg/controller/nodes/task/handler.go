@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	regErrors "github.com/pkg/errors"
@@ -51,10 +52,11 @@ const (
 )
 
 type metrics struct {
-	pluginPanics           labeled.Counter
-	unsupportedTaskType    labeled.Counter
-	pluginExecutionLatency labeled.StopWatch
-	pluginQueueLatency     labeled.StopWatch
+	pluginPanics            labeled.Counter
+	unsupportedTaskType     labeled.Counter
+	pluginExecutionLatency  labeled.StopWatch
+	pluginQueueLatency      labeled.StopWatch
+	pluginInitializeLatency labeled.StopWatch
 
 	// TODO We should have a metric to capture custom state size
 	scope promutils.Scope
@@ -234,24 +236,25 @@ type taskType = string
 type pluginID = string
 
 type Handler struct {
-	catalog          catalog.Client
-	asyncCatalog     catalog.AsyncClient
-	defaultPlugins   map[pluginCore.TaskType]pluginCore.Plugin
-	pluginsForType   map[pluginCore.TaskType]map[pluginID]pluginCore.Plugin
-	taskMetricsMap   map[MetricKey]*taskMetrics
-	defaultPlugin    pluginCore.Plugin
-	metrics          *metrics
-	pluginRegistry   PluginRegistryIface
-	kubeClient       pluginCore.KubeClient
-	kubeClientset    kubernetes.Interface
-	secretManager    pluginCore.SecretManager
-	resourceManager  resourcemanager.BaseResourceManager
-	cfg              *config.Config
-	pluginScope      promutils.Scope
-	eventConfig      *controllerConfig.EventConfig
-	clusterID        string
-	agentService     *agent.AgentService
-	connectorService *connector.ConnectorService
+	catalog             catalog.Client
+	asyncCatalog        catalog.AsyncClient
+	defaultPlugins      map[pluginCore.TaskType]pluginCore.Plugin
+	pluginsForType      map[pluginCore.TaskType]map[pluginID]pluginCore.Plugin
+	taskMetricsMap      map[MetricKey]*taskMetrics
+	taskMetricsMapMutex sync.RWMutex
+	defaultPlugin       pluginCore.Plugin
+	metrics             *metrics
+	pluginRegistry      PluginRegistryIface
+	kubeClient          pluginCore.KubeClient
+	kubeClientset       kubernetes.Interface
+	secretManager       pluginCore.SecretManager
+	resourceManager     resourcemanager.BaseResourceManager
+	cfg                 *config.Config
+	pluginScope         promutils.Scope
+	eventConfig         *controllerConfig.EventConfig
+	clusterID           string
+	agentService        *agent.AgentService
+	connectorService    *connector.ConnectorService
 }
 
 func (t *Handler) FinalizeRequired() bool {
@@ -406,12 +409,12 @@ func (t Handler) ResolvePlugin(ctx context.Context, ttype string, executionConfi
 		return p, nil
 	}
 
-	if t.connectorService != nil && t.connectorService.ContainTaskType(ttype) {
+	if t.connectorService != nil && t.connectorService.CorePlugin != nil && t.connectorService.ContainTaskType(ttype) {
 		return t.connectorService.CorePlugin, nil
 	}
 
 	// The agent service plugin is deprecated and will be removed in the future
-	if t.agentService != nil && t.agentService.ContainTaskType(ttype) {
+	if t.agentService != nil && t.agentService.CorePlugin != nil && t.agentService.ContainTaskType(ttype) {
 		return t.agentService.CorePlugin, nil
 	}
 
@@ -435,15 +438,38 @@ func (t Handler) fetchPluginTaskMetrics(pluginID, taskType string) (*taskMetrics
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := t.taskMetricsMap[metricNameKey]; !ok {
-		t.taskMetricsMap[metricNameKey] = &taskMetrics{
-			taskSucceeded: labeled.NewCounter(metricNameKey+"_success",
-				"Task "+metricNameKey+" finished successfully", t.pluginScope, labeled.EmitUnlabeledMetric),
-			taskFailed: labeled.NewCounter(metricNameKey+"_failure",
-				"Task "+metricNameKey+" failed", t.pluginScope, labeled.EmitUnlabeledMetric),
-		}
+
+	// Acquire read lock for fast read, this is the happy case
+	t.taskMetricsMapMutex.RLock()
+	existingTaskMetrics, ok := t.taskMetricsMap[metricNameKey]
+	t.taskMetricsMapMutex.RUnlock()
+
+	if ok {
+		return existingTaskMetrics, nil
 	}
-	return t.taskMetricsMap[metricNameKey], nil
+
+	// Acquire write lock since we may need to populate the map. We use a lock to avoid panics for concurrent writes
+	// and duplicate prometheus metrics
+	t.taskMetricsMapMutex.Lock()
+	defer t.taskMetricsMapMutex.Unlock()
+
+	// check condition again
+	existingTaskMetrics, ok = t.taskMetricsMap[metricNameKey]
+
+	if ok {
+		return existingTaskMetrics, nil
+	}
+
+	newTaskMetrics := &taskMetrics{
+		taskSucceeded: labeled.NewCounter(metricNameKey+"_success",
+			"Task "+metricNameKey+" finished successfully", t.pluginScope, labeled.EmitUnlabeledMetric),
+		taskFailed: labeled.NewCounter(metricNameKey+"_failure",
+			"Task "+metricNameKey+" failed", t.pluginScope, labeled.EmitUnlabeledMetric),
+	}
+
+	t.taskMetricsMap[metricNameKey] = newTaskMetrics
+
+	return newTaskMetrics, nil
 }
 
 func GetDeckStatus(ctx context.Context, tCtx *taskExecutionContext) (DeckStatus, error) {
@@ -525,6 +551,14 @@ func (t Handler) invokePlugin(ctx context.Context, p pluginCore.Plugin, tCtx *ta
 		(pluginTrns.pInfo.Phase() == pluginCore.PhaseInitializing || pluginTrns.pInfo.Phase() == pluginCore.PhaseRunning) {
 		if !ts.LastPhaseUpdatedAt.IsZero() {
 			t.metrics.pluginQueueLatency.Observe(ctx, ts.LastPhaseUpdatedAt, time.Now())
+		}
+	}
+
+	// Emit the initializing latency if the task has just transitioned from Initializing to Running.
+	if ts.PluginPhase == pluginCore.PhaseInitializing &&
+		pluginTrns.pInfo.Phase() == pluginCore.PhaseRunning {
+		if !ts.LastPhaseUpdatedAt.IsZero() {
+			t.metrics.pluginInitializeLatency.Observe(ctx, ts.LastPhaseUpdatedAt, time.Now())
 		}
 	}
 
@@ -775,12 +809,20 @@ func (t Handler) Handle(ctx context.Context, nCtx interfaces.NodeExecutionContex
 	}
 
 	// STEP 6: Persist the plugin state
+	// Only refresh LastPhaseUpdatedAt when the phase itself changes; intra-phase
+	// version bumps (e.g. emitted by MaybeUpdatePhaseVersion when a plugin's
+	// reason string changes) must not reset it, otherwise duration metrics like
+	// plugin_queue_latency lose their start anchor and undercount.
+	lastPhaseUpdatedAt := ts.LastPhaseUpdatedAt
+	if ts.PluginPhase != pluginTrns.pInfo.Phase() {
+		lastPhaseUpdatedAt = time.Now()
+	}
 	err = nCtx.NodeStateWriter().PutTaskNodeState(handler.TaskNodeState{
 		PluginState:                        pluginTrns.pluginState,
 		PluginStateVersion:                 pluginTrns.pluginStateVersion,
 		PluginPhase:                        pluginTrns.pInfo.Phase(),
 		PluginPhaseVersion:                 pluginTrns.pInfo.Version(),
-		LastPhaseUpdatedAt:                 time.Now(),
+		LastPhaseUpdatedAt:                 lastPhaseUpdatedAt,
 		PreviousNodeExecutionCheckpointURI: ts.PreviousNodeExecutionCheckpointURI,
 		CleanupOnFailure:                   ts.CleanupOnFailure || pluginTrns.pInfo.CleanupOnFailure(),
 	})
@@ -1035,11 +1077,12 @@ func New(ctx context.Context, kubeClient executors.Client, kubeClientset kuberne
 		pluginsForType: make(map[pluginCore.TaskType]map[pluginID]pluginCore.Plugin),
 		taskMetricsMap: make(map[MetricKey]*taskMetrics),
 		metrics: &metrics{
-			pluginPanics:           labeled.NewCounter("plugin_panic", "Task plugin panicked when trying to execute a Handler.", scope),
-			unsupportedTaskType:    labeled.NewCounter("unsupported_tasktype", "No Handler plugin configured for Handler type", scope),
-			pluginExecutionLatency: labeled.NewStopWatch("plugin_exec_latency", "Time taken to invoke plugin for one round", time.Microsecond, scope),
-			pluginQueueLatency:     labeled.NewStopWatch("plugin_queue_latency", "Time spent by plugin in queued phase", time.Microsecond, scope),
-			scope:                  scope,
+			pluginPanics:            labeled.NewCounter("plugin_panic", "Task plugin panicked when trying to execute a Handler.", scope),
+			unsupportedTaskType:     labeled.NewCounter("unsupported_tasktype", "No Handler plugin configured for Handler type", scope),
+			pluginExecutionLatency:  labeled.NewStopWatch("plugin_exec_latency", "Time taken to invoke plugin for one round", time.Microsecond, scope),
+			pluginQueueLatency:      labeled.NewStopWatch("plugin_queue_latency", "Time spent by plugin in queued phase", time.Microsecond, scope),
+			pluginInitializeLatency: labeled.NewStopWatch("plugin_initialize_latency", "Time spent by plugin in initializing phase", time.Microsecond, scope),
+			scope:                   scope,
 		},
 		pluginScope:      scope.NewSubScope("plugin"),
 		kubeClient:       kubeClient,

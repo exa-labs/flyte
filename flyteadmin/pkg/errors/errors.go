@@ -16,6 +16,22 @@ import (
 	"github.com/flyteorg/flyte/flytestdlib/logger"
 )
 
+// maxErrorMessageBytes is the maximum size for gRPC error messages. gRPC has a
+// default MaxSendMsgSize of 4MB. The jsondiff output for large workflows can
+// exceed this limit, causing RST_STREAM INTERNAL_ERROR instead of a proper
+// error status. We cap at 3MB to leave room for gRPC framing and metadata.
+const maxErrorMessageBytes = 3 * 1024 * 1024
+
+// truncateErrorMessage truncates a message to stay within gRPC message size
+// limits. When truncated, appends a note indicating the diff was cut short.
+func truncateErrorMessage(msg string) string {
+	if len(msg) <= maxErrorMessageBytes {
+		return msg
+	}
+	const suffix = "\n\n... [diff truncated — exceeded gRPC max message size]"
+	return msg[:maxErrorMessageBytes-len(suffix)] + suffix
+}
+
 type FlyteAdminError interface {
 	Error() string
 	Code() codes.Code
@@ -91,7 +107,7 @@ func NewAlreadyInTerminalStateError(ctx context.Context, errorMsg string, curPha
 	statusErr, transformationErr := NewFlyteAdminError(codes.FailedPrecondition, errorMsg).WithDetails(reason)
 	if transformationErr != nil {
 		logger.Panicf(ctx, "Failed to wrap grpc status in type 'Error': %v", transformationErr)
-		return NewFlyteAdminErrorf(codes.FailedPrecondition, errorMsg)  //nolint
+		return NewFlyteAdminError(codes.FailedPrecondition, errorMsg)
 	}
 	return statusErr
 }
@@ -106,7 +122,7 @@ func NewIncompatibleClusterError(ctx context.Context, errorMsg, curCluster strin
 	})
 	if transformationErr != nil {
 		logger.Panicf(ctx, "Failed to wrap grpc status in type 'Error': %v", transformationErr) //nolint
-		return NewFlyteAdminErrorf(codes.FailedPrecondition, errorMsg) //nolint
+		return NewFlyteAdminError(codes.FailedPrecondition, errorMsg)
 	}
 	return statusErr
 }
@@ -135,12 +151,12 @@ func NewTaskExistsDifferentStructureError(ctx context.Context, request *admin.Ta
 
 	errorMsg += strings.Join(rs, "\n")
 
-	return NewFlyteAdminErrorf(codes.InvalidArgument, errorMsg) //nolint
+	return NewFlyteAdminError(codes.InvalidArgument, truncateErrorMessage(errorMsg))
 }
 
-func NewTaskExistsIdenticalStructureError(ctx context.Context, request *admin.TaskCreateRequest) FlyteAdminError {
+func NewTaskExistsIdenticalStructureError() FlyteAdminError {
 	errorMsg := "task with identical structure already exists"
-	return NewFlyteAdminErrorf(codes.AlreadyExists, errorMsg) //nolint
+	return NewFlyteAdminError(codes.AlreadyExists, errorMsg)
 }
 
 func NewWorkflowExistsDifferentStructureError(ctx context.Context, request *admin.WorkflowCreateRequest, oldSpec *core.CompiledWorkflowClosure, newSpec *core.CompiledWorkflowClosure) FlyteAdminError {
@@ -149,7 +165,7 @@ func NewWorkflowExistsDifferentStructureError(ctx context.Context, request *admi
 	rdiff, _ := jsondiff.Compare(newSpec, oldSpec)
 	rs := compareJsons(diff, rdiff)
 
-	errorMsg += strings.Join(rs, "\n")
+	errorMsg = truncateErrorMessage(errorMsg + strings.Join(rs, "\n"))
 
 	statusErr, transformationErr := NewFlyteAdminError(codes.InvalidArgument, errorMsg).WithDetails(&admin.CreateWorkflowFailureReason{
 		Reason: &admin.CreateWorkflowFailureReason_ExistsDifferentStructure{
@@ -160,7 +176,7 @@ func NewWorkflowExistsDifferentStructureError(ctx context.Context, request *admi
 	})
 	if transformationErr != nil {
 		logger.Errorf(ctx, "Failed to wrap grpc status in type 'Error': %v", transformationErr)
-		return NewFlyteAdminErrorf(codes.InvalidArgument, errorMsg) //nolint
+		return NewFlyteAdminError(codes.InvalidArgument, errorMsg)
 	}
 	return statusErr
 }
@@ -176,7 +192,7 @@ func NewWorkflowExistsIdenticalStructureError(ctx context.Context, request *admi
 	})
 	if transformationErr != nil {
 		logger.Errorf(ctx, "Failed to wrap grpc status in type 'Error': %v", transformationErr)
-		return NewFlyteAdminErrorf(codes.AlreadyExists, errorMsg) //nolint
+		return NewFlyteAdminError(codes.AlreadyExists, errorMsg)
 	}
 	return statusErr
 }
@@ -189,12 +205,12 @@ func NewLaunchPlanExistsDifferentStructureError(ctx context.Context, request *ad
 
 	errorMsg += strings.Join(rs, "\n")
 
-	return NewFlyteAdminErrorf(codes.InvalidArgument, errorMsg) //nolint
+	return NewFlyteAdminError(codes.InvalidArgument, truncateErrorMessage(errorMsg))
 }
 
-func NewLaunchPlanExistsIdenticalStructureError(ctx context.Context, request *admin.LaunchPlanCreateRequest) FlyteAdminError {
+func NewLaunchPlanExistsIdenticalStructureError() FlyteAdminError {
 	errorMsg := "launch plan with identical structure already exists"
-	return NewFlyteAdminErrorf(codes.AlreadyExists, errorMsg) //nolint
+	return NewFlyteAdminError(codes.AlreadyExists, errorMsg)
 }
 
 func IsDoesNotExistError(err error) bool {
@@ -209,12 +225,11 @@ func NewInactiveProjectError(ctx context.Context, id string) FlyteAdminError {
 	})
 	if transformationErr != nil {
 		logger.Errorf(ctx, "failed to wrap grpc status in type 'Error': %v", transformationErr)
-		return NewFlyteAdminErrorf(codes.InvalidArgument, errMsg) //nolint
+		return NewFlyteAdminError(codes.InvalidArgument, errMsg)
 	}
 	return statusErr
 }
 
 func NewInvalidLiteralTypeError(name string, err error) FlyteAdminError {
-	return NewFlyteAdminErrorf(codes.InvalidArgument,
-		fmt.Sprintf("Failed to validate literal type for [%s] with err: %s", name, err)) //nolint
+	return NewFlyteAdminErrorf(codes.InvalidArgument, "Failed to validate literal type for [%s] with err: %s", name, err)
 }

@@ -32,10 +32,7 @@ const (
 	ErrReplaceCmdTemplate     stdErrors.ErrorCode = "CMD_TEMPLATE_FAILED"
 	FlyteK8sArrayIndexVarName string              = "FLYTE_K8S_ARRAY_INDEX"
 	finalizer                 string              = "flyte.org/finalizer-array"
-	// Old non-domain-qualified finalizer for backwards compatibility
-	// This should eventually be removed
-	oldFinalizer    string = "flyte/array"
-	JobIndexVarName string = "BATCH_JOB_ARRAY_INDEX_VAR_NAME"
+	JobIndexVarName           string              = "BATCH_JOB_ARRAY_INDEX_VAR_NAME"
 )
 
 var (
@@ -150,8 +147,7 @@ func clearFinalizer(ctx context.Context, o client.Object, kubeClient pluginsCore
 	// Checking for the old finalizer too for backwards compatibility. This should eventually be removed
 	// Go does short-circuiting so we have to make sure both are removed
 	finalizerRemoved := controllerutil.RemoveFinalizer(o, finalizer)
-	oldFinalizerRemoved := controllerutil.RemoveFinalizer(o, oldFinalizer)
-	if finalizerRemoved || oldFinalizerRemoved {
+	if finalizerRemoved {
 		err := kubeClient.GetClient().Update(ctx, o)
 		if err != nil && !isK8sObjectNotExists(err) {
 			logger.Warningf(ctx, "Failed to clear finalizer for Resource with name: %v/%v. Error: %v", o.GetNamespace(), o.GetName(), err)
@@ -198,7 +194,7 @@ func launchSubtask(ctx context.Context, stCtx SubTaskExecutionContext, cfg *Conf
 		if k8serrors.IsForbidden(err) {
 			if strings.Contains(err.Error(), "exceeded quota") {
 				logger.Warnf(ctx, "Failed to launch job, resource quota exceeded and the operation is not guarded by back-off. err: %v", err)
-				return pluginsCore.PhaseInfoWaitingForResourcesInfo(time.Now(), pluginsCore.DefaultPhaseVersion, fmt.Sprintf("Exceeded resourcequota: %s", err.Error()), nil), nil
+				return pluginsCore.PhaseInfoWaitingForResourcesInfo(pluginsCore.DefaultPhaseVersion, fmt.Sprintf("Exceeded resourcequota: %s", err.Error()), nil), nil
 			}
 			return pluginsCore.PhaseInfoRetryableFailure("RuntimeFailure", err.Error(), nil), nil
 		} else if k8serrors.IsBadRequest(err) || k8serrors.IsInvalid(err) {

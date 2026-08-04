@@ -6,10 +6,19 @@ metadata:
   name: {{ template "flytescheduler.name" . }}
   namespace: {{ template "flyte.namespace" . }}
   labels: {{ include "flytescheduler.labels" . | nindent 4 }}
+  {{- if .Values.flytescheduler.annotations }}
+  annotations:
+    {{- with .Values.flytescheduler.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
 spec:
   replicas: 1
   selector:
     matchLabels: {{ include "flytescheduler.selectorLabels" . | nindent 6 }}
+  {{- with .Values.flytescheduler.strategy }}
+  strategy: {{ tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
   template:
     metadata:
       annotations:

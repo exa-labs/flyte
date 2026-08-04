@@ -40,7 +40,7 @@ Chart for basic single Flyte executable deployment
 | configuration.auth.oidc.clientSecret | string | `""` |  |
 | configuration.auth.refreshTokenLifespan | string | `"60m"` |  |
 | configuration.co-pilot.image.repository | string | `"cr.flyte.org/flyteorg/flytecopilot"` |  |
-| configuration.co-pilot.image.tag | string | `"v1.15.3"` |  |
+| configuration.co-pilot.image.tag | string | `"v1.16.8"` |  |
 | configuration.connectorService.defaultConnector.defaultTimeout | string | `"10s"` |  |
 | configuration.connectorService.defaultConnector.endpoint | string | `"k8s://flyteconnector.flyte:8000"` |  |
 | configuration.connectorService.defaultConnector.insecure | bool | `true` |  |

@@ -5,10 +5,21 @@ metadata:
   name: {{ template "datacatalog.name" . }}
   namespace: {{ template "flyte.namespace" . }}
   labels: {{ include "datacatalog.labels" . | nindent 4 }}
+  {{- if .Values.datacatalog.annotations }}
+  annotations:
+    {{- with .Values.datacatalog.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
 spec:
+  {{- if not .Values.datacatalog.autoscaling.enabled }}
   replicas: {{ .Values.datacatalog.replicaCount }}
+  {{- end }}
   selector:
     matchLabels: {{ include "datacatalog.selectorLabels" . | nindent 6 }}
+  {{- with .Values.datacatalog.strategy }}
+  strategy: {{ tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
   template:
     metadata:
       annotations:
@@ -87,8 +98,14 @@ spec:
       volumes: {{- include "databaseSecret.volume" . | nindent 6 }}
       - emptyDir: {}
         name: shared-data
-      - configMap:
-          name: datacatalog-config
+      - projected:
+          sources:
+            - configMap:
+                name: datacatalog-config
+            {{- if .Values.storage.secretName }}
+            - secret:
+                name: {{ .Values.storage.secretName }}
+            {{- end }}
         name: config-volume
       {{- with .Values.datacatalog.additionalVolumes -}}
       {{ tpl (toYaml .) $ | nindent 6 }}

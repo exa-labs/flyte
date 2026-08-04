@@ -16,6 +16,8 @@ Flyte Propeller Configuration
 
 - `plugins <#section-plugins>`_
 
+- `prof <#section-prof>`_
+
 - `propeller <#section-propeller>`_
 
 - `secrets <#section-secrets>`_
@@ -431,7 +433,7 @@ Path (string)
   ""
   
 
-RawPath (string)
+Fragment (string)
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 **Default Value**: 
@@ -439,26 +441,6 @@ RawPath (string)
 .. code-block:: yaml
 
   ""
-  
-
-OmitHost (bool)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  "false"
-  
-
-ForceQuery (bool)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  "false"
   
 
 RawQuery (string)
@@ -471,7 +453,7 @@ RawQuery (string)
   ""
   
 
-Fragment (string)
+RawPath (string)
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 **Default Value**: 
@@ -489,6 +471,26 @@ RawFragment (string)
 .. code-block:: yaml
 
   ""
+  
+
+ForceQuery (bool)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  "false"
+  
+
+OmitHost (bool)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  "false"
   
 
 deviceflow.Config
@@ -1251,8 +1253,9 @@ k8s (`config.K8sPluginConfig`_)
     memory: 128Mi
     name: flyte-copilot-
     output-vol-name: flyte-outputs
-    start-timeout: 1m40s
+    start-timeout: 0s
     storage: ""
+    timeout: 1h0m0s
   create-container-config-error-grace-period: 0s
   create-container-error-grace-period: 3m0s
   default-annotations:
@@ -1375,30 +1378,6 @@ logs (`logs.LogConfig`_)
   stackdriver-logresourcename: ""
   stackdriver-template-uri: ""
   templates: null
-  
-
-qubole (`config.Config`_)
-------------------------------------------------------------------------------------------------------------------------
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  analyzeLinkPath: /v2/analyze
-  clusterConfigs:
-  - labels:
-    - default
-    limit: 100
-    namespaceScopeQuotaProportionCap: 0.7
-    primaryLabel: default
-    projectScopeQuotaProportionCap: 0.7
-  commandApiPath: /api/v1.2/commands/
-  defaultClusterLabel: default
-  destinationClusterConfigs: []
-  endpoint: https://wellness.qubole.com
-  lruCacheSize: 2000
-  quboleTokenKey: FLYTE_QUBOLE_CLIENT_TOKEN
-  workers: 15
   
 
 ray (`ray.Config`_)
@@ -2281,118 +2260,6 @@ timeout (`config.Duration`_)
   1m0s
   
 
-config.Config
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-endpoint (`config.URL`_)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-Endpoint for qubole to use
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  https://wellness.qubole.com
-  
-
-commandApiPath (`config.URL`_)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-API Path where commands can be launched on Qubole. Should be a valid url.
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  /api/v1.2/commands/
-  
-
-analyzeLinkPath (`config.URL`_)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-URL path where queries can be visualized on qubole website. Should be a valid url.
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  /v2/analyze
-  
-
-quboleTokenKey (string)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-Name of the key where to find Qubole token in the secret manager.
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  FLYTE_QUBOLE_CLIENT_TOKEN
-  
-
-lruCacheSize (int)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-Size of the AutoRefreshCache
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  "2000"
-  
-
-workers (int)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-Number of parallel workers to refresh the cache
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  "15"
-  
-
-defaultClusterLabel (string)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-The default cluster label. This will be used if label is not specified on the hive job.
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  default
-  
-
-clusterConfigs ([]config.ClusterConfig)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  - labels:
-    - default
-    limit: 100
-    namespaceScopeQuotaProportionCap: 0.7
-    primaryLabel: default
-    projectScopeQuotaProportionCap: 0.7
-  
-
-destinationClusterConfigs ([]config.DestinationClusterConfig)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  []
-  
-
 config.K8sPluginConfig
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -2601,8 +2468,9 @@ Co-Pilot Configuration
   memory: 128Mi
   name: flyte-copilot-
   output-vol-name: flyte-outputs
-  start-timeout: 1m40s
+  start-timeout: 0s
   storage: ""
+  timeout: 1h0m0s
   
 
 delete-resource-on-finalize (bool)
@@ -2923,7 +2791,17 @@ start-timeout (`config.Duration`_)
 
 .. code-block:: yaml
 
-  1m40s
+  0s
+  
+
+timeout (`config.Duration`_)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  1h0m0s
   
 
 cpu (string)
@@ -3957,6 +3835,16 @@ serviceType (string)
   NodePort
   
 
+enableIngress (bool)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  "false"
+  
+
 includeDashboard (bool)
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
@@ -4430,6 +4318,19 @@ Indicates the amount of time before transitioning to success
   0s
   
 
+Section: prof
+========================================================================================================================
+
+DisableConfigEndpoint (bool)
+------------------------------------------------------------------------------------------------------------------------
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  "false"
+  
+
 Section: propeller
 ========================================================================================================================
 
@@ -4720,7 +4621,6 @@ config for a workflow node
   default-deadlines:
     node-active-deadline: 0s
     node-execution-deadline: 0s
-    workflow-active-deadline: 0s
   default-max-attempts: 1
   enable-cr-debug-metadata: false
   ignore-retry-cause: false
@@ -4872,6 +4772,7 @@ Configuration for array nodes
 
   default-parallelism-behavior: unlimited
   event-version: 0
+  max-delta-timestamp: 72h0m0s
   max-task-phase-version-attempts: 3
   use-map-plugin-logs: false
   
@@ -4906,7 +4807,7 @@ admin-launcher (`launchplan.AdminConfig`_)
   workers: 10
   
 
-resourcemanager (`config.Config (resourcemanager)`_)
+resourcemanager (`config.Config`_)
 ------------------------------------------------------------------------------------------------------------------------
 
 **Default Value**: 
@@ -4970,6 +4871,18 @@ Override subNode log links with those configured for the map plugin logs
 .. code-block:: yaml
 
   "false"
+  
+
+max-delta-timestamp (`config.Duration`_)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+Maximum delta timestamp between ArrayNode start and an individual subNode start.
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  72h0m0s
   
 
 max-task-phase-version-attempts (int)
@@ -5116,7 +5029,7 @@ Bucket capacity as number of items
   "10000"
   
 
-config.Config (resourcemanager)
+config.Config
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 type (string)
@@ -5241,16 +5154,6 @@ fallback-to-output-reference (bool)
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 Whether output data should be sent by reference when it is too large to be sent inline in execution events.
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  "false"
-  
-
-ErrorOnAlreadyExists (bool)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 **Default Value**: 
 
@@ -5446,7 +5349,6 @@ Default value for timeouts
 
   node-active-deadline: 0s
   node-execution-deadline: 0s
-  workflow-active-deadline: 0s
   
 
 max-node-retries-system-failures (int64)
@@ -5528,18 +5430,6 @@ node-active-deadline (`config.Duration`_)
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 Default value of node timeout that includes the time spent queued.
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  0s
-  
-
-workflow-active-deadline (`config.Duration`_)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-Default value of workflow timeout that includes the time spent queued.
 
 **Default Value**: 
 
@@ -6214,6 +6104,28 @@ Vault Secret Manager config.
   annotations: null
   kvVersion: "2"
   role: flyte
+  
+
+disableCreateMutatingWebhookConfig (bool)
+------------------------------------------------------------------------------------------------------------------------
+
+Disable registration of the MutatingWebhookConfiguration, leaving it to be managed out of band.
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  "false"
+  
+
+namespaceSelector (v1.LabelSelector)
+------------------------------------------------------------------------------------------------------------------------
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  null
   
 
 config.AWSSecretManagerConfig

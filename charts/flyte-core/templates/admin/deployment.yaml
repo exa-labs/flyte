@@ -5,10 +5,21 @@ metadata:
   name: {{ template "flyteadmin.name" . }}
   namespace: {{ template "flyte.namespace" . }}
   labels: {{ include "flyteadmin.labels" . | nindent 4 }}
+  {{- if .Values.flyteadmin.annotations }}
+  annotations:
+    {{- with .Values.flyteadmin.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
 spec:
+  {{- if not .Values.flyteadmin.autoscaling.enabled }}
   replicas: {{ .Values.flyteadmin.replicaCount }}
+  {{- end }}
   selector:
     matchLabels: {{ include "flyteadmin.selectorLabels" . | nindent 6 }}
+  {{- with .Values.flyteadmin.strategy }}
+  strategy: {{ tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
   template:
     metadata:
       annotations:
@@ -161,14 +172,13 @@ spec:
         - containerPort: {{ .Values.configmap.adminServer.server.grpc.port }}
         - containerPort: {{ .Values.configmap.adminServer.flyteadmin.profilerPort }}
         readinessProbe:
-          exec:
-            command: [ "sh", "-c", "reply=$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:8088/healthcheck); if [ \"$reply\" -lt 200 -o \"$reply\" -ge 400 ]; then exit 1; fi;","grpc_health_probe", "-addr=:8089"]
-          initialDelaySeconds: 15
+        {{- with .Values.flyteadmin.readinessProbe -}}
+        {{- . | nindent 10 }}
+        {{- end }}
         livenessProbe:
-          exec:
-            command: [ "sh", "-c", "reply=$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:8088/healthcheck); if [ \"$reply\" -lt 200 -o \"$reply\" -ge 400 ]; then exit 1; fi;","grpc_health_probe", "-addr=:8089"]
-          initialDelaySeconds: 20
-          periodSeconds: 5
+        {{- with .Values.flyteadmin.livenessProbe -}}
+        {{- . | nindent 10 }}
+        {{- end }}
         resources: {{- toYaml .Values.flyteadmin.resources | nindent 10 }}
         securityContext:
           allowPrivilegeEscalation: false
@@ -193,8 +203,14 @@ spec:
         name: shared-data
       - emptyDir: {}
         name: scratch
-      - configMap:
-          name: flyte-admin-base-config
+      - projected:
+          sources:
+            - configMap:
+                name: flyte-admin-base-config
+            {{- if .Values.storage.secretName }}
+            - secret:
+                name: {{ .Values.storage.secretName }}
+            {{- end }}
         name: base-config-volume
       - projected:
           sources:
@@ -202,6 +218,10 @@ spec:
                 name: flyte-admin-base-config
             - configMap:
                 name: flyte-admin-clusters-config
+            {{- if .Values.storage.secretName }}
+            - secret:
+                name: {{ .Values.storage.secretName }}
+            {{- end }}
         name: clusters-config-volume
       {{- if .Values.cluster_resource_manager.enabled }}
       - configMap:

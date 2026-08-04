@@ -34,7 +34,6 @@ import (
 	"github.com/flyteorg/flyte/flyteadmin/pkg/manager/impl/shared"
 	"github.com/flyteorg/flyte/flyteadmin/pkg/manager/impl/testutils"
 	managerInterfaces "github.com/flyteorg/flyte/flyteadmin/pkg/manager/interfaces"
-	"github.com/flyteorg/flyte/flyteadmin/pkg/manager/mocks"
 	managerMocks "github.com/flyteorg/flyte/flyteadmin/pkg/manager/mocks"
 	"github.com/flyteorg/flyte/flyteadmin/pkg/repositories/interfaces"
 	repositoryMocks "github.com/flyteorg/flyte/flyteadmin/pkg/repositories/mocks"
@@ -51,6 +50,7 @@ import (
 	"github.com/flyteorg/flyte/flyteidl/gen/pb-go/flyteidl/admin"
 	"github.com/flyteorg/flyte/flyteidl/gen/pb-go/flyteidl/core"
 	"github.com/flyteorg/flyte/flyteidl/gen/pb-go/flyteidl/event"
+	"github.com/flyteorg/flyte/flyteidl/gen/pb-go/flyteidl/service"
 	mockScope "github.com/flyteorg/flyte/flytestdlib/promutils"
 	"github.com/flyteorg/flyte/flytestdlib/storage"
 )
@@ -1018,7 +1018,6 @@ func TestCreateExecutionInterruptible(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -1107,7 +1106,6 @@ func TestCreateExecutionOverwriteCache(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -1187,7 +1185,6 @@ func TestCreateExecutionWithEnvs(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -4088,6 +4085,292 @@ func TestListExecutions_LegacyModel(t *testing.T) {
 	assert.Empty(t, executionList.GetToken())
 }
 
+func getLaunchPlanSpecWithPolicyBytes(t *testing.T, policy *admin.ConcurrencyPolicy) []byte {
+	spec := admin.LaunchPlanSpec{
+		WorkflowId: &core.Identifier{
+			ResourceType: core.ResourceType_WORKFLOW,
+			Project:      "project",
+			Domain:       "domain",
+			Name:         "name",
+			Version:      "version",
+		},
+		ConcurrencyPolicy: policy,
+	}
+	marshaledSpec, err := proto.Marshal(&spec)
+	assert.NoError(t, err)
+	return marshaledSpec
+}
+
+func TestCreateExecution_ConcurrencyPolicy(t *testing.T) {
+	ctx := context.Background()
+	mockStorage := getMockStorageForExecTest(ctx)
+	var mockPublisher notificationMocks.Publisher
+	var mockUrlData dataMocks.RemoteURLInterface
+
+	workflowID := &core.Identifier{
+		ResourceType: core.ResourceType_WORKFLOW,
+		Project:      "project",
+		Domain:       "domain",
+		Name:         "name",
+		Version:      "version",
+	}
+
+	launchPlanID := &core.Identifier{
+		ResourceType: core.ResourceType_LAUNCH_PLAN,
+		Project:      "project",
+		Domain:       "domain",
+		Name:         "concurrency_lp",
+		Version:      "v1",
+	}
+
+	// This is a LiteralMap, used for the actual execution request inputs
+	expectedRuntimeInputs := &core.LiteralMap{
+		Literals: map[string]*core.Literal{
+			"foo": {Value: &core.Literal_Scalar{Scalar: &core.Scalar{Value: &core.Scalar_Primitive{Primitive: &core.Primitive{Value: &core.Primitive_Integer{Integer: 1}}}}}},
+		},
+	}
+
+	expectedLPInputs := &core.ParameterMap{
+		Parameters: map[string]*core.Parameter{
+			"foo": {
+				Var: &core.Variable{
+					Type:        &core.LiteralType{Type: &core.LiteralType_Simple{Simple: core.SimpleType_INTEGER}},
+					Description: "foo_input",
+				},
+				Behavior: &core.Parameter_Default{Default: expectedRuntimeInputs.GetLiterals()["foo"]},
+			},
+		},
+	}
+
+	tests := []struct {
+		name                   string
+		concurrencyPolicy      *admin.ConcurrencyPolicy
+		activeExecutionsCount  int64
+		expectError            bool
+		expectedErrorCode      codes.Code
+		expectExecutionCreated bool
+	}{
+		{
+			name: "Limit Not Reached",
+			concurrencyPolicy: &admin.ConcurrencyPolicy{
+				Max:      3,
+				Behavior: admin.ConcurrencyLimitBehavior_CONCURRENCY_LIMIT_BEHAVIOR_SKIP,
+			},
+			activeExecutionsCount:  2,
+			expectError:            false,
+			expectExecutionCreated: true,
+		},
+		{
+			name: "Limit Reached (Skip)",
+			concurrencyPolicy: &admin.ConcurrencyPolicy{
+				Max:      3,
+				Behavior: admin.ConcurrencyLimitBehavior_CONCURRENCY_LIMIT_BEHAVIOR_SKIP,
+			},
+			activeExecutionsCount:  3,
+			expectError:            true,
+			expectedErrorCode:      codes.AlreadyExists,
+			expectExecutionCreated: false,
+		},
+		{
+			name: "Limit Exceeded (Skip)",
+			concurrencyPolicy: &admin.ConcurrencyPolicy{
+				Max:      3,
+				Behavior: admin.ConcurrencyLimitBehavior_CONCURRENCY_LIMIT_BEHAVIOR_SKIP,
+			},
+			activeExecutionsCount:  4,
+			expectError:            true,
+			expectedErrorCode:      codes.AlreadyExists,
+			expectExecutionCreated: false,
+		},
+		{
+			name:                   "No Policy",
+			concurrencyPolicy:      nil,
+			activeExecutionsCount:  10,
+			expectError:            false,
+			expectExecutionCreated: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockRepo := getMockRepositoryForExecTest()
+			mockPluginRegistry := plugins.NewRegistry()
+
+			mockWorkflowExecutor := &workflowengineMocks.WorkflowExecutor{}
+			mockWorkflowExecutor.On(
+				"Execute",
+				mock.Anything,
+				mock.Anything,
+			).Return(workflowengineInterfaces.ExecutionResponse{Cluster: "test-cluster"}, nil)
+
+			mockPluginRegistry.RegisterDefault(plugins.PluginIDWorkflowExecutor, mockWorkflowExecutor)
+
+			launchPlanSpecBytes := getLaunchPlanSpecWithPolicyBytes(t, tt.concurrencyPolicy)
+
+			lpClosure := admin.LaunchPlanClosure{
+				ExpectedInputs: expectedLPInputs,
+			}
+			lpClosureBytes, err := proto.Marshal(&lpClosure)
+			assert.NoError(t, err)
+
+			getLaunchPlanCb := func(id interfaces.Identifier) (models.LaunchPlan, error) {
+				assert.Equal(t, launchPlanID.GetProject(), id.Project)
+				assert.Equal(t, launchPlanID.GetDomain(), id.Domain)
+				assert.Equal(t, launchPlanID.GetName(), id.Name)
+				assert.Equal(t, launchPlanID.GetVersion(), id.Version)
+				activeState := int32(admin.LaunchPlanState_ACTIVE)
+				return models.LaunchPlan{
+					LaunchPlanKey: models.LaunchPlanKey{
+						Project: id.Project,
+						Domain:  id.Domain,
+						Name:    id.Name,
+						Version: id.Version,
+					},
+					WorkflowID: 1, // Assuming a valid workflow ID
+					Spec:       launchPlanSpecBytes,
+					State:      &activeState,
+					Closure:    lpClosureBytes,
+				}, nil
+			}
+			mockRepo.LaunchPlanRepo().(*repositoryMocks.MockLaunchPlanRepo).SetGetCallback(getLaunchPlanCb)
+
+			getWorkflowCb := func(id interfaces.Identifier) (models.Workflow, error) {
+				return models.Workflow{
+					WorkflowKey:             models.WorkflowKey{Project: workflowID.GetProject(), Domain: workflowID.GetDomain(), Name: workflowID.GetName(), Version: workflowID.GetVersion()},
+					RemoteClosureIdentifier: remoteClosureIdentifier, // Use the global const
+				}, nil
+			}
+			mockRepo.WorkflowRepo().(*repositoryMocks.MockWorkflowRepo).SetGetCallback(getWorkflowCb)
+
+			if tt.concurrencyPolicy != nil {
+				mockRepo.ExecutionRepo().(*repositoryMocks.MockExecutionRepo).SetCountCallback(
+					func(ctx context.Context, input interfaces.CountResourceInput) (int64, error) {
+						t.Logf("Received %d filters in SetCountCallback for test: %s", len(input.InlineFilters), tt.name)
+						for i, f := range input.InlineFilters {
+							gexpr, _ := f.GetGormQueryExpr()
+							t.Logf("Filter %d: Entity=%v, Field=%s, Args=%v", i, f.GetEntity(), f.GetField(), gexpr.Args)
+						}
+
+						var foundProject, foundDomain, foundLpName, foundPhase bool
+
+						for _, filter := range input.InlineFilters {
+							gormQueryExpr, err := filter.GetGormQueryExpr()
+							if !assert.NoError(t, err) {
+								continue
+							}
+							if !assert.NotNil(t, gormQueryExpr.Args) {
+								continue
+							}
+
+							entity := filter.GetEntity()
+							field := filter.GetField()
+
+							if entity == common.Execution {
+								if field == "execution_project" {
+									if val, ok := gormQueryExpr.Args.(string); ok && val == launchPlanID.GetProject() {
+										foundProject = true
+									}
+								} else if field == "execution_domain" {
+									if val, ok := gormQueryExpr.Args.(string); ok && val == launchPlanID.GetDomain() {
+										foundDomain = true
+									}
+								} else if field == "phase" {
+									if phaseList, ok := gormQueryExpr.Args.([]string); ok {
+										assert.Equal(t, len(activeExecutionPhases), len(phaseList), "execution phase filter list length mismatch")
+										assert.ElementsMatch(t, activeExecutionPhases, phaseList, "phase list contents mismatch")
+										foundPhase = true
+									}
+								}
+							} else if entity == common.LaunchPlan {
+								if field == shared.Name {
+									if val, ok := gormQueryExpr.Args.(string); ok && val == launchPlanID.GetName() {
+										foundLpName = true
+									}
+								} // No check for version filter as it's missing
+							}
+						}
+						assert.True(t, foundProject, "execution project filter not found or incorrect")
+						assert.True(t, foundDomain, "execution domain filter not found or incorrect")
+						assert.True(t, foundLpName, "lp name filter not found or incorrect")
+						assert.True(t, foundPhase, "execution phase filter not found or incorrect")
+						var joinedWithLaunchPlan bool
+						if assert.NotNil(t, input.JoinTableEntities) {
+							for entityInJoin := range input.JoinTableEntities {
+								if entityInJoin == common.LaunchPlan {
+									joinedWithLaunchPlan = true
+									break
+								}
+							}
+						}
+						assert.True(t, joinedWithLaunchPlan, "Join with LaunchPlan table not specified")
+						return tt.activeExecutionsCount, nil
+					},
+				)
+			}
+
+			executionCreatedActual := false
+			if tt.expectExecutionCreated {
+				mockRepo.ExecutionRepo().(*repositoryMocks.MockExecutionRepo).SetCreateCallback(
+					func(ctx context.Context, input models.Execution) error {
+						assert.Equal(t, launchPlanID.GetProject(), input.Project)
+						assert.Equal(t, launchPlanID.GetDomain(), input.Domain)
+						executionCreatedActual = true
+						input.ID = 1
+						return nil
+					},
+				)
+			}
+
+			executionManager := NewExecutionManager(
+				mockRepo,
+				mockPluginRegistry,
+				getMockExecutionsConfigProvider(),
+				mockStorage,
+				mockScope.NewTestScope(),
+				mockScope.NewTestScope(),
+				&mockPublisher,
+				&mockUrlData,
+				&managerMocks.WorkflowInterface{},
+				&managerMocks.NamedEntityInterface{},
+				nil,
+				nil,
+				nil,
+			)
+
+			request := &admin.ExecutionCreateRequest{
+				Project: launchPlanID.GetProject(),
+				Domain:  launchPlanID.GetDomain(),
+				Name:    "test-execution-" + strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(tt.name), " ", "-"), "(", ""), ")", ""),
+				Spec: &admin.ExecutionSpec{
+					LaunchPlan: launchPlanID,
+				},
+				Inputs: expectedRuntimeInputs,
+			}
+
+			_, err = executionManager.CreateExecution(ctx, request, time.Now())
+			t.Logf("Test: %s, Received error: [%v], Error type: %T", tt.name, err, err)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				adminErr, ok := err.(flyteAdminErrors.FlyteAdminError)
+				assert.True(t, ok, "Error should be a FlyteAdminError, got %T: %v", err, err)
+				if ok {
+					t.Logf("Test: %s, Admin error code: [%v] (expected: [%v])", tt.name, adminErr.Code(), tt.expectedErrorCode)
+				}
+				assert.Equal(t, tt.expectedErrorCode, adminErr.Code())
+			} else {
+				assert.NoError(t, err)
+			}
+
+			if tt.expectExecutionCreated {
+				assert.True(t, executionCreatedActual, "ExecutionRepo.Create was expected to be called but was not")
+			} else {
+				assert.False(t, executionCreatedActual, "ExecutionRepo.Create was not expected to be called but was")
+			}
+		})
+	}
+}
+
 func TestSetDefaults(t *testing.T) {
 	task := &core.CompiledTask{
 		Template: &core.TaskTemplate{
@@ -4516,6 +4799,23 @@ func TestCreateSingleTaskExecution(t *testing.T) {
 		getMockWorkflowConfigProvider(), getMockWorkflowCompiler(), mockStorage,
 		storagePrefix, mockScope.NewTestScope())
 	namedEntityManager := NewNamedEntityManager(repository, getMockConfigForNETest(), mockScope.NewTestScope())
+	namedEntityRepo := repository.NamedEntityRepo().(*repositoryMocks.NamedEntityRepoInterface)
+	namedEntityRepo.EXPECT().
+		Get(mock.Anything, mock.Anything).
+		RunAndReturn(func(ctx context.Context, input interfaces.GetNamedEntityInput) (models.NamedEntity, error) {
+			return models.NamedEntity{
+				NamedEntityKey: models.NamedEntityKey{
+					ResourceType: input.ResourceType,
+					Project:      input.Project,
+					Domain:       input.Domain,
+					Name:         input.Name,
+				},
+				NamedEntityMetadataFields: models.NamedEntityMetadataFields{
+					Description: "",
+				},
+			}, nil
+		})
+	namedEntityRepo.EXPECT().Update(mock.Anything, mock.Anything).Return(nil)
 
 	mockExecutor := workflowengineMocks.WorkflowExecutor{}
 	mockExecutor.EXPECT().Execute(mock.Anything, mock.Anything).Return(workflowengineInterfaces.ExecutionResponse{}, nil)
@@ -5585,7 +5885,7 @@ func TestGetClusterAssignment(t *testing.T) {
 		mockConfig := getMockExecutionsConfigProvider()
 		mockConfig.(*runtimeMocks.MockConfigurationProvider).AddClusterPoolAssignmentConfiguration(clusterPoolAsstProvider)
 
-		resourceManager := mocks.ResourceInterface{}
+		resourceManager := managerMocks.ResourceInterface{}
 		resourceManager.EXPECT().GetResource(mock.Anything, mock.Anything).Return(nil, nil)
 		executionManager := ExecutionManager{
 			resourceManager: &resourceManager,
@@ -5614,7 +5914,7 @@ func TestGetClusterAssignment(t *testing.T) {
 	})
 	t.Run("no value in DB nor in config, takes value from request", func(t *testing.T) {
 		mockConfig := getMockExecutionsConfigProvider()
-		resourceManager := mocks.ResourceInterface{}
+		resourceManager := managerMocks.ResourceInterface{}
 		resourceManager.EXPECT().GetResource(mock.Anything, mock.Anything).Return(nil, nil)
 
 		executionManager := ExecutionManager{
@@ -5643,7 +5943,7 @@ func TestGetClusterAssignment(t *testing.T) {
 		mockConfig := getMockExecutionsConfigProvider()
 		mockConfig.(*runtimeMocks.MockConfigurationProvider).AddClusterPoolAssignmentConfiguration(clusterPoolAsstProvider)
 
-		resourceManager := mocks.ResourceInterface{}
+		resourceManager := managerMocks.ResourceInterface{}
 		resourceManager.EXPECT().GetResource(mock.Anything, mock.Anything).Return(nil, nil)
 		executionManager := ExecutionManager{
 			resourceManager: &resourceManager,
@@ -5677,7 +5977,7 @@ func TestGetClusterAssignment(t *testing.T) {
 	})
 	t.Run("db error", func(t *testing.T) {
 		expected := errors.New("fail db")
-		resourceManager := mocks.ResourceInterface{}
+		resourceManager := managerMocks.ResourceInterface{}
 		resourceManager.EXPECT().GetResource(mock.Anything, mock.Anything).RunAndReturn(func(ctx context.Context,
 			request managerInterfaces.ResourceRequest) (*managerInterfaces.ResourceResponse, error) {
 			assert.EqualValues(t, request, managerInterfaces.ResourceRequest{
@@ -6028,4 +6328,157 @@ func TestQueryTemplate(t *testing.T) {
 		_, err := m.fillInTemplateArgs(ctx, q, otherInputs.GetLiterals())
 		assert.Error(t, err)
 	})
+}
+
+func TestAddIdentityAnnotations(t *testing.T) {
+	principal := "test-user@example.com"
+	subject := "user-123-subject"
+	setupConfig := func(enabled bool, prefix string, keys []string) runtimeInterfaces.Configuration {
+		mockConfig := runtimeMocks.NewMockConfigurationProvider(
+			testutils.GetApplicationConfigWithDefaultDomains(), nil, nil, nil, nil, nil)
+		mockConfig.ApplicationConfiguration().GetTopLevelConfig().InjectIdentityAnnotations = enabled
+		mockConfig.ApplicationConfiguration().GetTopLevelConfig().IdentityAnnotationPrefix = prefix
+		mockConfig.ApplicationConfiguration().GetTopLevelConfig().IdentityAnnotationKeys = keys
+		return mockConfig
+	}
+
+	t.Run("user identity", func(t *testing.T) {
+		manager := ExecutionManager{config: setupConfig(true, "flyte.ai", []string{"email", "sub"})}
+		userInfo := &service.UserInfoResponse{Email: principal, Subject: subject}
+		identity, _ := auth.NewIdentityContext("", "user-id-123", "", time.Now(), sets.NewString(), userInfo, nil)
+		result := manager.addIdentityAnnotations(identity.WithContext(context.Background()), map[string]string{"existing": "value"})
+		assert.Equal(t, principal, result["flyte.ai/user-email"])
+		assert.Equal(t, subject, result["flyte.ai/user-sub"])
+		assert.Equal(t, "value", result["existing"])
+	})
+
+	t.Run("disabled", func(t *testing.T) {
+		manager := ExecutionManager{config: setupConfig(false, "flyte.ai", []string{"email", "sub"})}
+		userInfo := &service.UserInfoResponse{Email: principal, Subject: subject}
+		identity, _ := auth.NewIdentityContext("", "user-id-123", "", time.Now(), sets.NewString(), userInfo, nil)
+		result := manager.addIdentityAnnotations(identity.WithContext(context.Background()), map[string]string{"existing": "value"})
+		assert.NotContains(t, result, "flyte.ai/user-email")
+		assert.Equal(t, "value", result["existing"])
+	})
+
+	t.Run("no identity context", func(t *testing.T) {
+		manager := ExecutionManager{config: setupConfig(true, "flyte.ai", []string{"email", "sub"})}
+		result := manager.addIdentityAnnotations(context.Background(), map[string]string{"existing": "value"})
+		assert.NotContains(t, result, "flyte.ai/user-email")
+		assert.Equal(t, "value", result["existing"])
+	})
+
+	t.Run("nil annotations map", func(t *testing.T) {
+		manager := ExecutionManager{config: setupConfig(true, "flyte.ai", []string{"email", "sub"})}
+		userInfo := &service.UserInfoResponse{Email: principal, Subject: subject}
+		identity, _ := auth.NewIdentityContext("", "user-id-123", "", time.Now(), sets.NewString(), userInfo, nil)
+		result := manager.addIdentityAnnotations(identity.WithContext(context.Background()), nil)
+		assert.Equal(t, principal, result["flyte.ai/user-email"])
+		assert.Equal(t, subject, result["flyte.ai/user-sub"])
+	})
+
+	t.Run("annotation already exists", func(t *testing.T) {
+		manager := ExecutionManager{config: setupConfig(true, "flyte.ai", []string{"email", "sub"})}
+		userInfo := &service.UserInfoResponse{Email: principal, Subject: subject}
+		identity, _ := auth.NewIdentityContext("", "user-id-123", "", time.Now(), sets.NewString(), userInfo, nil)
+		result := manager.addIdentityAnnotations(identity.WithContext(context.Background()), map[string]string{"flyte.ai/user-email": "existing@example.com"})
+		assert.Equal(t, "existing@example.com", result["flyte.ai/user-email"])
+		assert.Equal(t, subject, result["flyte.ai/user-sub"])
+	})
+
+	t.Run("default prefix empty keys", func(t *testing.T) {
+		manager := ExecutionManager{config: setupConfig(true, "", nil)}
+		userInfo := &service.UserInfoResponse{Email: principal, Subject: subject}
+		identity, _ := auth.NewIdentityContext("", "user-id-123", "", time.Now(), sets.NewString(), userInfo, nil)
+		result := manager.addIdentityAnnotations(identity.WithContext(context.Background()), map[string]string{"existing": "value"})
+		assert.NotContains(t, result, "flyte.org/user-email")
+		assert.Equal(t, "value", result["existing"])
+	})
+
+	t.Run("app identity", func(t *testing.T) {
+		manager := ExecutionManager{config: setupConfig(true, "flyte.ai", []string{"email", "sub", "id"})}
+		identity, _ := auth.NewIdentityContext("", "", "app-123", time.Now(), sets.NewString(), nil, nil)
+		result := manager.addIdentityAnnotations(identity.WithContext(context.Background()), map[string]string{"existing": "value"})
+		assert.Equal(t, "app-123", result["flyte.ai/app-email"])
+		assert.Equal(t, "app-123", result["flyte.ai/app-sub"])
+		assert.Equal(t, "app-123", result["flyte.ai/app-id"])
+	})
+
+	t.Run("app identity annotation already exists", func(t *testing.T) {
+		manager := ExecutionManager{config: setupConfig(true, "flyte.ai", []string{"email", "sub", "id"})}
+		identity, _ := auth.NewIdentityContext("", "", "app-123", time.Now(), sets.NewString(), nil, nil)
+		result := manager.addIdentityAnnotations(identity.WithContext(context.Background()), map[string]string{"flyte.ai/app-email": "existing-app@example.com"})
+		assert.Equal(t, "existing-app@example.com", result["flyte.ai/app-email"])
+		assert.Equal(t, "app-123", result["flyte.ai/app-sub"])
+		assert.Equal(t, "app-123", result["flyte.ai/app-id"])
+	})
+
+	t.Run("app identity unknown key", func(t *testing.T) {
+		manager := ExecutionManager{config: setupConfig(true, "flyte.ai", []string{"email", "unknown-key"})}
+		identity, _ := auth.NewIdentityContext("", "", "app-123", time.Now(), sets.NewString(), nil, nil)
+		result := manager.addIdentityAnnotations(identity.WithContext(context.Background()), map[string]string{"existing": "value"})
+		assert.Equal(t, "app-123", result["flyte.ai/app-email"])
+		assert.NotContains(t, result, "flyte.ai/app-unknown-key")
+	})
+
+	t.Run("unknown key", func(t *testing.T) {
+		manager := ExecutionManager{config: setupConfig(true, "flyte.ai", []string{"email", "unknown-key"})}
+		userInfo := &service.UserInfoResponse{Email: principal, Subject: subject}
+		identity, _ := auth.NewIdentityContext("", "user-id-123", "", time.Now(), sets.NewString(), userInfo, nil)
+		result := manager.addIdentityAnnotations(identity.WithContext(context.Background()), map[string]string{"existing": "value"})
+		assert.Equal(t, principal, result["flyte.ai/user-email"])
+		assert.NotContains(t, result, "flyte.ai/user-unknown-key")
+	})
+
+	t.Run("invalid prefix", func(t *testing.T) {
+		for _, prefix := range []string{"Flyte.ai", "flyte_ai"} {
+			manager := ExecutionManager{config: setupConfig(true, prefix, []string{"email", "sub"})}
+			userInfo := &service.UserInfoResponse{Email: principal, Subject: subject}
+			identity, _ := auth.NewIdentityContext("", "user-id-123", "", time.Now(), sets.NewString(), userInfo, nil)
+			result := manager.addIdentityAnnotations(identity.WithContext(context.Background()), map[string]string{"existing": "value"})
+			assert.NotContains(t, result, prefix+"/user-email")
+			assert.Equal(t, "value", result["existing"])
+		}
+	})
+
+	t.Run("empty value", func(t *testing.T) {
+		manager := ExecutionManager{config: setupConfig(true, "flyte.ai", []string{"email", "sub"})}
+		userInfo := &service.UserInfoResponse{Email: "", Subject: ""}
+		identity, _ := auth.NewIdentityContext("", "", "", time.Now(), sets.NewString(), userInfo, nil)
+		result := manager.addIdentityAnnotations(identity.WithContext(context.Background()), map[string]string{"existing": "value"})
+		assert.NotContains(t, result, "flyte.ai/user-email")
+		assert.Equal(t, "value", result["existing"])
+	})
+
+	t.Run("app takes precedence", func(t *testing.T) {
+		manager := ExecutionManager{config: setupConfig(true, "flyte.ai", []string{"email", "sub", "id"})}
+		userInfo := &service.UserInfoResponse{Email: principal, Subject: subject}
+		identity, _ := auth.NewIdentityContext("", "user-id-123", "app-456", time.Now(), sets.NewString(), userInfo, nil)
+		result := manager.addIdentityAnnotations(identity.WithContext(context.Background()), map[string]string{"existing": "value"})
+		assert.Equal(t, "app-456", result["flyte.ai/app-email"])
+		assert.NotContains(t, result, "flyte.ai/user-email")
+	})
+
+	t.Run("empty keys slice", func(t *testing.T) {
+		manager := ExecutionManager{config: setupConfig(true, "flyte.ai", []string{})}
+		userInfo := &service.UserInfoResponse{Email: principal, Subject: subject}
+		identity, _ := auth.NewIdentityContext("", "user-id-123", "", time.Now(), sets.NewString(), userInfo, nil)
+		result := manager.addIdentityAnnotations(identity.WithContext(context.Background()), map[string]string{"existing": "value"})
+		assert.NotContains(t, result, "flyte.ai/user-email")
+		assert.Equal(t, "value", result["existing"])
+	})
+
+	t.Run("neither app nor user identity", func(t *testing.T) {
+		// Test case where identity context is not empty but neither app nor user identity is true
+		// This can happen if there's an execution identity but no app ID or user info
+		manager := ExecutionManager{config: setupConfig(true, "flyte.ai", []string{"email", "sub"})}
+		// Create identity with execution identity but no app ID or user info
+		identity, _ := auth.NewIdentityContext("exec-identity-123", "", "", time.Now(), sets.NewString(), nil, nil)
+		result := manager.addIdentityAnnotations(identity.WithContext(context.Background()), map[string]string{"existing": "value"})
+		// Should return original annotations unchanged since neither app nor user identity is true
+		assert.NotContains(t, result, "flyte.ai/user-email")
+		assert.NotContains(t, result, "flyte.ai/app-email")
+		assert.Equal(t, "value", result["existing"])
+	})
+
 }

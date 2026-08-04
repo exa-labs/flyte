@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"sync"
-	"time"
 
 	"golang.org/x/exp/maps"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -19,8 +18,10 @@ import (
 	"github.com/flyteorg/flyte/flyteplugins/go/tasks/pluginmachinery"
 	"github.com/flyteorg/flyte/flyteplugins/go/tasks/pluginmachinery/core"
 	"github.com/flyteorg/flyte/flyteplugins/go/tasks/pluginmachinery/core/template"
+	"github.com/flyteorg/flyte/flyteplugins/go/tasks/pluginmachinery/flytek8s"
 	"github.com/flyteorg/flyte/flyteplugins/go/tasks/pluginmachinery/io"
 	"github.com/flyteorg/flyte/flyteplugins/go/tasks/pluginmachinery/ioutils"
+	"github.com/flyteorg/flyte/flyteplugins/go/tasks/pluginmachinery/utils"
 	"github.com/flyteorg/flyte/flyteplugins/go/tasks/pluginmachinery/webapi"
 	"github.com/flyteorg/flyte/flytestdlib/logger"
 	"github.com/flyteorg/flyte/flytestdlib/promutils"
@@ -125,6 +126,24 @@ func (p *Plugin) Create(ctx context.Context, taskCtx webapi.TaskExecutionContext
 		defer func() {
 			// Restore unrendered template for subsequent renders.
 			taskTemplate.GetContainer().Args = argTemplate
+		}()
+	} else if taskTemplate.GetK8SPod() != nil {
+		coreTCtx, ok := taskCtx.(core.TaskExecutionContext)
+		if !ok {
+			return nil, nil, fmt.Errorf("failed to cast taskCtx to core.TaskExecutionContext for K8sPod rendering")
+		}
+		podSpec, _, _, err := flytek8s.ToK8sPodSpec(ctx, coreTCtx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to build K8s pod spec: %v", err)
+		}
+		renderedPodSpecStruct, err := utils.MarshalObjToStruct(podSpec)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to marshal rendered pod spec: %v", err)
+		}
+		originalPodSpec := taskTemplate.GetK8SPod().GetPodSpec()
+		taskTemplate.GetK8SPod().PodSpec = renderedPodSpecStruct
+		defer func() {
+			taskTemplate.GetK8SPod().PodSpec = originalPodSpec
 		}()
 	}
 	outputPrefix := taskCtx.OutputWriter().GetOutputPrefixPath().String()
@@ -295,11 +314,11 @@ func (p *Plugin) Status(ctx context.Context, taskCtx webapi.StatusContext) (phas
 
 	switch resource.Phase {
 	case flyteIdl.TaskExecution_QUEUED:
-		return core.PhaseInfoQueuedWithTaskInfo(time.Now(), core.DefaultPhaseVersion, resource.Message, taskInfo), nil
+		return core.PhaseInfoQueuedWithTaskInfo(core.DefaultPhaseVersion, resource.Message, taskInfo), nil
 	case flyteIdl.TaskExecution_WAITING_FOR_RESOURCES:
-		return core.PhaseInfoWaitingForResourcesInfo(time.Now(), core.DefaultPhaseVersion, resource.Message, taskInfo), nil
+		return core.PhaseInfoWaitingForResourcesInfo(core.DefaultPhaseVersion, resource.Message, taskInfo), nil
 	case flyteIdl.TaskExecution_INITIALIZING:
-		return core.PhaseInfoInitializing(time.Now(), core.DefaultPhaseVersion, resource.Message, taskInfo), nil
+		return core.PhaseInfoInitializing(core.DefaultPhaseVersion, resource.Message, taskInfo), nil
 	case flyteIdl.TaskExecution_RUNNING:
 		return core.PhaseInfoRunning(core.DefaultPhaseVersion, taskInfo), nil
 	case flyteIdl.TaskExecution_SUCCEEDED:
@@ -313,6 +332,8 @@ func (p *Plugin) Status(ctx context.Context, taskCtx webapi.StatusContext) (phas
 		return core.PhaseInfoFailure(errorCode, "failed to run the job with aborted phase.", taskInfo), nil
 	case flyteIdl.TaskExecution_FAILED:
 		return core.PhaseInfoFailure(errorCode, fmt.Sprintf("failed to run the job: %s", resource.Message), taskInfo), nil
+	case flyteIdl.TaskExecution_RETRYABLE_FAILED:
+		return core.PhaseInfoRetryableFailure(errorCode, fmt.Sprintf("failed to run the job: %s", resource.Message), taskInfo), nil
 	}
 	// The default phase is undefined.
 	if resource.Phase != flyteIdl.TaskExecution_UNDEFINED {
@@ -322,7 +343,7 @@ func (p *Plugin) Status(ctx context.Context, taskCtx webapi.StatusContext) (phas
 	// If the phase is undefined, we will use state to determine the phase.
 	switch resource.State {
 	case admin.State_PENDING:
-		return core.PhaseInfoInitializing(time.Now(), core.DefaultPhaseVersion, resource.Message, taskInfo), nil
+		return core.PhaseInfoInitializing(core.DefaultPhaseVersion, resource.Message, taskInfo), nil
 	case admin.State_RUNNING:
 		return core.PhaseInfoRunning(core.DefaultPhaseVersion, taskInfo), nil
 	case admin.State_PERMANENT_FAILURE:

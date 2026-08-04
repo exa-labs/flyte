@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mitchellh/mapstructure"
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -239,20 +239,6 @@ func TestServerConfig_SetFlags(t *testing.T) {
 			}
 		})
 	})
-	t.Run("Test_security.auditAccess", func(t *testing.T) {
-
-		t.Run("Override", func(t *testing.T) {
-			testValue := "1"
-
-			cmdFlags.Set("security.auditAccess", testValue)
-			if vBool, err := cmdFlags.GetBool("security.auditAccess"); err == nil {
-				testDecodeJson_ServerConfig(t, fmt.Sprintf("%v", vBool), &actual.Security.AuditAccess)
-
-			} else {
-				assert.FailNow(t, err.Error())
-			}
-		})
-	})
 	t.Run("Test_security.allowCors", func(t *testing.T) {
 
 		t.Run("Override", func(t *testing.T) {
@@ -351,70 +337,14 @@ func TestServerConfig_SetFlags(t *testing.T) {
 			}
 		})
 	})
-	t.Run("Test_thirdPartyConfig.flyteClient.clientId", func(t *testing.T) {
+	t.Run("Test_grpc.maxConcurrentStreams", func(t *testing.T) {
 
 		t.Run("Override", func(t *testing.T) {
 			testValue := "1"
 
-			cmdFlags.Set("thirdPartyConfig.flyteClient.clientId", testValue)
-			if vString, err := cmdFlags.GetString("thirdPartyConfig.flyteClient.clientId"); err == nil {
-				testDecodeJson_ServerConfig(t, fmt.Sprintf("%v", vString), &actual.DeprecatedThirdPartyConfig.FlyteClientConfig.ClientID)
-
-			} else {
-				assert.FailNow(t, err.Error())
-			}
-		})
-	})
-	t.Run("Test_thirdPartyConfig.flyteClient.redirectUri", func(t *testing.T) {
-
-		t.Run("Override", func(t *testing.T) {
-			testValue := "1"
-
-			cmdFlags.Set("thirdPartyConfig.flyteClient.redirectUri", testValue)
-			if vString, err := cmdFlags.GetString("thirdPartyConfig.flyteClient.redirectUri"); err == nil {
-				testDecodeJson_ServerConfig(t, fmt.Sprintf("%v", vString), &actual.DeprecatedThirdPartyConfig.FlyteClientConfig.RedirectURI)
-
-			} else {
-				assert.FailNow(t, err.Error())
-			}
-		})
-	})
-	t.Run("Test_thirdPartyConfig.flyteClient.scopes", func(t *testing.T) {
-
-		t.Run("Override", func(t *testing.T) {
-			testValue := join_ServerConfig(defaultServerConfig.DeprecatedThirdPartyConfig.FlyteClientConfig.Scopes, ",")
-
-			cmdFlags.Set("thirdPartyConfig.flyteClient.scopes", testValue)
-			if vStringSlice, err := cmdFlags.GetStringSlice("thirdPartyConfig.flyteClient.scopes"); err == nil {
-				testDecodeRaw_ServerConfig(t, join_ServerConfig(vStringSlice, ","), &actual.DeprecatedThirdPartyConfig.FlyteClientConfig.Scopes)
-
-			} else {
-				assert.FailNow(t, err.Error())
-			}
-		})
-	})
-	t.Run("Test_thirdPartyConfig.flyteClient.audience", func(t *testing.T) {
-
-		t.Run("Override", func(t *testing.T) {
-			testValue := "1"
-
-			cmdFlags.Set("thirdPartyConfig.flyteClient.audience", testValue)
-			if vString, err := cmdFlags.GetString("thirdPartyConfig.flyteClient.audience"); err == nil {
-				testDecodeJson_ServerConfig(t, fmt.Sprintf("%v", vString), &actual.DeprecatedThirdPartyConfig.FlyteClientConfig.Audience)
-
-			} else {
-				assert.FailNow(t, err.Error())
-			}
-		})
-	})
-	t.Run("Test_dataProxy.upload.maxSize", func(t *testing.T) {
-
-		t.Run("Override", func(t *testing.T) {
-			testValue := defaultServerConfig.DataProxy.Upload.MaxSize.String()
-
-			cmdFlags.Set("dataProxy.upload.maxSize", testValue)
-			if vString, err := cmdFlags.GetString("dataProxy.upload.maxSize"); err == nil {
-				testDecodeJson_ServerConfig(t, fmt.Sprintf("%v", vString), &actual.DataProxy.Upload.MaxSize)
+			cmdFlags.Set("grpc.maxConcurrentStreams", testValue)
+			if vInt, err := cmdFlags.GetInt("grpc.maxConcurrentStreams"); err == nil {
+				testDecodeJson_ServerConfig(t, fmt.Sprintf("%v", vInt), &actual.GrpcConfig.MaxConcurrentStreams)
 
 			} else {
 				assert.FailNow(t, err.Error())
@@ -527,6 +457,20 @@ func TestServerConfig_SetFlags(t *testing.T) {
 			cmdFlags.Set("kubeClientConfig.timeout", testValue)
 			if vString, err := cmdFlags.GetString("kubeClientConfig.timeout"); err == nil {
 				testDecodeJson_ServerConfig(t, fmt.Sprintf("%v", vString), &actual.KubeClientConfig.Timeout)
+
+			} else {
+				assert.FailNow(t, err.Error())
+			}
+		})
+	})
+	t.Run("Test_gracefulShutdownTimeoutSeconds", func(t *testing.T) {
+
+		t.Run("Override", func(t *testing.T) {
+			testValue := "1"
+
+			cmdFlags.Set("gracefulShutdownTimeoutSeconds", testValue)
+			if vInt, err := cmdFlags.GetInt("gracefulShutdownTimeoutSeconds"); err == nil {
+				testDecodeJson_ServerConfig(t, fmt.Sprintf("%v", vInt), &actual.GracefulShutdownTimeoutSeconds)
 
 			} else {
 				assert.FailNow(t, err.Error())

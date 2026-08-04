@@ -79,8 +79,8 @@ func dummyTaskTemplate() *core.TaskTemplate {
 
 func dummyInputReader() io.InputReader {
 	inputReader := &pluginsIOMock.InputReader{}
-	inputReader.EXPECT().GetInputPath().Return(storage.DataReference("test-data-reference"))
-	inputReader.EXPECT().GetInputPrefixPath().Return(storage.DataReference("test-data-reference-prefix"))
+	inputReader.EXPECT().GetInputPath().Return("test-data-reference")
+	inputReader.EXPECT().GetInputPrefixPath().Return("test-data-reference-prefix")
 	inputReader.EXPECT().Get(mock.Anything).Return(&core.LiteralMap{}, nil)
 	return inputReader
 }
@@ -211,121 +211,6 @@ func TestAddRequiredNodeSelectorRequirements(t *testing.T) {
 								Key:      "preferred",
 								Operator: v1.NodeSelectorOpIn,
 								Values:   []string{"preferred"},
-							},
-						},
-					},
-				},
-			},
-			affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution,
-		)
-	})
-}
-
-func TestAddPreferredNodeSelectorRequirements(t *testing.T) {
-	t.Run("with empty node affinity", func(t *testing.T) {
-		affinity := v1.Affinity{}
-		nst := v1.NodeSelectorRequirement{
-			Key:      "new",
-			Operator: v1.NodeSelectorOpIn,
-			Values:   []string{"new"},
-		}
-		AddPreferredNodeSelectorRequirements(&affinity, 10, nst)
-		assert.EqualValues(
-			t,
-			[]v1.PreferredSchedulingTerm{
-				v1.PreferredSchedulingTerm{
-					Weight: 10,
-					Preference: v1.NodeSelectorTerm{
-						MatchExpressions: []v1.NodeSelectorRequirement{
-							v1.NodeSelectorRequirement{
-								Key:      "new",
-								Operator: v1.NodeSelectorOpIn,
-								Values:   []string{"new"},
-							},
-						},
-					},
-				},
-			},
-			affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution,
-		)
-	})
-
-	t.Run("with existing node affinity", func(t *testing.T) {
-		affinity := v1.Affinity{
-			NodeAffinity: &v1.NodeAffinity{
-				RequiredDuringSchedulingIgnoredDuringExecution: &v1.NodeSelector{
-					NodeSelectorTerms: []v1.NodeSelectorTerm{
-						v1.NodeSelectorTerm{
-							MatchExpressions: []v1.NodeSelectorRequirement{
-								v1.NodeSelectorRequirement{
-									Key:      "required",
-									Operator: v1.NodeSelectorOpIn,
-									Values:   []string{"required"},
-								},
-							},
-						},
-					},
-				},
-				PreferredDuringSchedulingIgnoredDuringExecution: []v1.PreferredSchedulingTerm{
-					v1.PreferredSchedulingTerm{
-						Weight: 1,
-						Preference: v1.NodeSelectorTerm{
-							MatchExpressions: []v1.NodeSelectorRequirement{
-								v1.NodeSelectorRequirement{
-									Key:      "preferred",
-									Operator: v1.NodeSelectorOpIn,
-									Values:   []string{"preferred"},
-								},
-							},
-						},
-					},
-				},
-			},
-		}
-		nst := v1.NodeSelectorRequirement{
-			Key:      "new",
-			Operator: v1.NodeSelectorOpIn,
-			Values:   []string{"new"},
-		}
-		AddPreferredNodeSelectorRequirements(&affinity, 10, nst)
-		assert.EqualValues(
-			t,
-			[]v1.NodeSelectorTerm{
-				v1.NodeSelectorTerm{
-					MatchExpressions: []v1.NodeSelectorRequirement{
-						v1.NodeSelectorRequirement{
-							Key:      "required",
-							Operator: v1.NodeSelectorOpIn,
-							Values:   []string{"required"},
-						},
-					},
-				},
-			},
-			affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms,
-		)
-		assert.EqualValues(
-			t,
-			[]v1.PreferredSchedulingTerm{
-				v1.PreferredSchedulingTerm{
-					Weight: 1,
-					Preference: v1.NodeSelectorTerm{
-						MatchExpressions: []v1.NodeSelectorRequirement{
-							v1.NodeSelectorRequirement{
-								Key:      "preferred",
-								Operator: v1.NodeSelectorOpIn,
-								Values:   []string{"preferred"},
-							},
-						},
-					},
-				},
-				v1.PreferredSchedulingTerm{
-					Weight: 10,
-					Preference: v1.NodeSelectorTerm{
-						MatchExpressions: []v1.NodeSelectorRequirement{
-							v1.NodeSelectorRequirement{
-								Key:      "new",
-								Operator: v1.NodeSelectorOpIn,
-								Values:   []string{"new"},
 							},
 						},
 					},
@@ -1699,50 +1584,49 @@ func TestDemystifyFailure(t *testing.T) {
 		assert.Equal(t, core.ExecutionError_SYSTEM, phaseInfo.Err().GetKind())
 	})
 
-	t.Run("GKE kubelet graceful node shutdown", func(t *testing.T) {
-		containerReason := "some reason"
-		phaseInfo, err := DemystifyFailure(ctx, v1.PodStatus{
-			Message: "Pod Node is in progress of shutting down, not admitting any new pods",
-			Reason:  "Shutdown",
-			ContainerStatuses: []v1.ContainerStatus{
-				{
-					LastTerminationState: v1.ContainerState{
-						Terminated: &v1.ContainerStateTerminated{
-							Reason:   containerReason,
-							ExitCode: SIGKILL,
-						},
-					},
-				},
-			},
-		}, pluginsCore.TaskInfo{}, "")
-		assert.Nil(t, err)
-		assert.Equal(t, pluginsCore.PhaseRetryableFailure, phaseInfo.Phase())
-		assert.Equal(t, "Interrupted", phaseInfo.Err().GetCode())
-		assert.Equal(t, core.ExecutionError_SYSTEM, phaseInfo.Err().GetKind())
-		assert.Contains(t, phaseInfo.Err().GetMessage(), containerReason)
+	t.Run("GKE node preemption", func(t *testing.T) {
+		for _, reason := range []string{
+			"Terminated",
+			"Shutdown",
+			"NodeShutdown",
+		} {
+			t.Run(reason, func(t *testing.T) {
+				message := "Test pod status message"
+				phaseInfo, err := DemystifyFailure(ctx, v1.PodStatus{
+					Message: message,
+					Reason:  reason,
+					// Can't always rely on GCP returining container statuses when node is preempted
+					ContainerStatuses: []v1.ContainerStatus{},
+				}, pluginsCore.TaskInfo{}, "")
+				assert.Nil(t, err)
+				assert.Equal(t, pluginsCore.PhaseRetryableFailure, phaseInfo.Phase())
+				assert.Equal(t, "Interrupted", phaseInfo.Err().GetCode())
+				assert.Equal(t, core.ExecutionError_SYSTEM, phaseInfo.Err().GetKind())
+				assert.Equal(t, message, phaseInfo.Err().GetMessage())
+			})
+		}
 	})
 
-	t.Run("GKE kubelet graceful node shutdown", func(t *testing.T) {
-		containerReason := "some reason"
-		phaseInfo, err := DemystifyFailure(ctx, v1.PodStatus{
-			Message: "Foobar",
-			Reason:  "Terminated",
-			ContainerStatuses: []v1.ContainerStatus{
-				{
-					LastTerminationState: v1.ContainerState{
-						Terminated: &v1.ContainerStateTerminated{
-							Reason:   containerReason,
-							ExitCode: SIGKILL,
-						},
-					},
-				},
-			},
-		}, pluginsCore.TaskInfo{}, "")
-		assert.Nil(t, err)
-		assert.Equal(t, pluginsCore.PhaseRetryableFailure, phaseInfo.Phase())
-		assert.Equal(t, "Interrupted", phaseInfo.Err().GetCode())
-		assert.Equal(t, core.ExecutionError_SYSTEM, phaseInfo.Err().GetKind())
-		assert.Contains(t, phaseInfo.Err().GetMessage(), containerReason)
+	t.Run("Kubelet admission denies pod due to missing node label", func(t *testing.T) {
+		for _, reason := range []string{
+			"NodeAffinity",
+		} {
+			t.Run(reason, func(t *testing.T) {
+				message := "Pod was rejected: Predicate NodeAffinity failed: node(s) didn't match Pod's node affinity/selector"
+				phaseInfo, err := DemystifyFailure(ctx, v1.PodStatus{
+					Message: message,
+					Reason:  reason,
+					Phase:   v1.PodFailed,
+					// Can't always rely on GCP returining container statuses when node is preempted
+					ContainerStatuses: []v1.ContainerStatus{},
+				}, pluginsCore.TaskInfo{}, "")
+				assert.Nil(t, err)
+				assert.Equal(t, pluginsCore.PhaseRetryableFailure, phaseInfo.Phase())
+				assert.Equal(t, "Interrupted", phaseInfo.Err().GetCode())
+				assert.Equal(t, core.ExecutionError_SYSTEM, phaseInfo.Err().GetKind())
+				assert.Equal(t, message, phaseInfo.Err().GetMessage())
+			})
+		}
 	})
 }
 
@@ -2446,6 +2330,116 @@ func TestMergeBasePodSpecsOntoTemplate(t *testing.T) {
 			},
 			primaryContainerName:     "task-1",
 			primaryInitContainerName: "task-init-1",
+		},
+		{
+			name: "template with default container with env vars, base with default container",
+			templatePodSpec: &v1.PodSpec{
+				Containers: []v1.Container{
+					{
+						Name:  "default",
+						Image: "default-task-image",
+						Env:   []v1.EnvVar{{Name: "FOO", Value: "BAR"}},
+					},
+				},
+				InitContainers: []v1.Container{
+					{
+						Name:  "default-init",
+						Image: "default-task-init-image",
+						Env:   []v1.EnvVar{{Name: "INIT_FOO", Value: "INIT_BAR"}},
+					},
+				},
+			},
+			basePodSpec: &v1.PodSpec{
+				Containers: []v1.Container{
+					{
+						Name:  "default",
+						Image: "task-image",
+					},
+				},
+				InitContainers: []v1.Container{
+					{
+						Name:  "default-init",
+						Image: "task-init-image",
+					},
+				},
+			},
+			expectedResult: &v1.PodSpec{
+				Containers: []v1.Container{
+					{
+						Name:  "default",
+						Image: "task-image",
+						Env: []v1.EnvVar{
+							{Name: "FOO", Value: "BAR"},
+						},
+					},
+				},
+				InitContainers: []v1.Container{
+					{
+						Name:  "default-init",
+						Image: "task-init-image",
+						Env: []v1.EnvVar{
+							{Name: "INIT_FOO", Value: "INIT_BAR"},
+						},
+					},
+				},
+			},
+			primaryContainerName:     "primary",
+			primaryInitContainerName: "primary-init",
+		},
+		{
+			name: "template with primary container with env vars, base with primary container",
+			templatePodSpec: &v1.PodSpec{
+				Containers: []v1.Container{
+					{
+						Name:  "primary",
+						Image: "default-task-image",
+						Env:   []v1.EnvVar{{Name: "FOO", Value: "BAR"}},
+					},
+				},
+				InitContainers: []v1.Container{
+					{
+						Name:  "primary-init",
+						Image: "default-task-init-image",
+						Env:   []v1.EnvVar{{Name: "INIT_FOO", Value: "INIT_BAR"}},
+					},
+				},
+			},
+			basePodSpec: &v1.PodSpec{
+				Containers: []v1.Container{
+					{
+						Name:  "primary",
+						Image: "task-image",
+					},
+				},
+				InitContainers: []v1.Container{
+					{
+						Name:  "primary-init",
+						Image: "task-init-image",
+					},
+				},
+			},
+			expectedResult: &v1.PodSpec{
+				Containers: []v1.Container{
+					{
+						Name:  "primary",
+						Image: "task-image",
+						Env: []v1.EnvVar{
+							{Name: "FOO", Value: "BAR"},
+						},
+					},
+				},
+				InitContainers: []v1.Container{
+					{
+						Name:  "primary-init",
+						Image: "task-init-image",
+						Env: []v1.EnvVar{
+							{Name: "INIT_FOO", Value: "INIT_BAR"},
+						},
+					},
+				},
+			},
+			primaryContainerName:     "primary",
+			primaryInitContainerName: "primary-init",
 		},
 	}
 

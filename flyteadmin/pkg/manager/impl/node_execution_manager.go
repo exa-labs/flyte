@@ -219,11 +219,9 @@ func (m *NodeExecutionManager) CreateNodeEvent(ctx context.Context, request *adm
 	if err != nil {
 		m.metrics.MissingWorkflowExecution.Inc()
 		logger.Debugf(ctx, "Failed to find existing execution with id [%+v] with err: %v", executionID, err)
-		if err != nil {
-			if ferr, ok := err.(errors.FlyteAdminError); ok {
-				return nil, errors.NewFlyteAdminErrorf(ferr.Code(),
-					"Failed to get existing execution id: [%+v] with err: %v", executionID, err)
-			}
+		if ferr, ok := err.(errors.FlyteAdminError); ok {
+			return nil, errors.NewFlyteAdminErrorf(ferr.Code(),
+				"Failed to get existing execution id: [%+v] with err: %v", executionID, err)
 		}
 		return nil, fmt.Errorf("failed to get existing execution id: [%+v]", executionID)
 	}
@@ -288,7 +286,7 @@ func (m *NodeExecutionManager) CreateNodeEvent(ctx context.Context, request *adm
 		logger.Infof(ctx, "error publishing event [%+v] with err: [%v]", request.GetRequestId(), err)
 	}
 
-	go func() {
+	go func() { //nolint:gosec
 		ceCtx := context.TODO()
 		if err := m.cloudEventPublisher.Publish(ceCtx, proto.MessageName(request), request); err != nil {
 			logger.Infof(ctx, "error publishing cloud event [%+v] with err: [%v]", request.GetRequestId(), err)

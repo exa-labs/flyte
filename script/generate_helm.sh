@@ -6,7 +6,7 @@ echo "Generating Helm"
 
 HELM_SKIP_INSTALL=${HELM_SKIP_INSTALL:-false}
 
-export HELM_INSTALL_DIR=${TMPDIR:-/tmp}
+export HELM_INSTALL_DIR=${TMPDIR}
 
 if [ "${HELM_SKIP_INSTALL}" != "true" ]; then
 	# See https://github.com/helm/helm/issues/13324 for a breaking change in latest version of helm

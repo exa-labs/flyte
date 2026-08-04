@@ -3,6 +3,7 @@ package ray
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	"github.com/flyteorg/flyte/flyteidl/gen/pb-go/flyteidl/core"
 	"github.com/flyteorg/flyte/flyteidl/gen/pb-go/flyteidl/plugins"
@@ -222,6 +224,50 @@ func TestBuildResourceRay(t *testing.T) {
 	assert.Equal(t, ray.Spec.RayClusterSpec.HeadGroupSpec.Template.Spec.ServiceAccountName, GetConfig().ServiceAccount)
 }
 
+func TestBuildResourceRayEnableIngress(t *testing.T) {
+	assert.NoError(t, config.SetK8sPluginConfig(&config.K8sPluginConfig{}))
+
+	testCases := []struct {
+		name          string
+		enableIngress bool
+	}{
+		{
+			name:          "ingress enabled",
+			enableIngress: true,
+		},
+		{
+			name:          "ingress disabled",
+			enableIngress: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			origConfig := *GetConfig()
+			t.Cleanup(func() { assert.NoError(t, SetConfig(&origConfig)) })
+
+			assert.NoError(t, SetConfig(&Config{
+				EnableIngress: tc.enableIngress,
+			}))
+
+			rayJobInput := dummyRayCustomObj()
+
+			taskTemplate := dummyRayTaskTemplate("ray-id", rayJobInput)
+			taskContext := dummyRayTaskContext(taskTemplate, resourceRequirements, nil, "", serviceAccount)
+			rayJobResourceHandler := rayJobResourceHandler{}
+			r, err := rayJobResourceHandler.BuildResource(context.TODO(), taskContext)
+			assert.Nil(t, err)
+			assert.NotNil(t, r)
+			rayJob, ok := r.(*rayv1.RayJob)
+			assert.True(t, ok)
+
+			// Verify that EnableIngress is set correctly on the HeadGroupSpec
+			assert.NotNil(t, rayJob.Spec.RayClusterSpec.HeadGroupSpec.EnableIngress)
+			assert.Equal(t, tc.enableIngress, *rayJob.Spec.RayClusterSpec.HeadGroupSpec.EnableIngress)
+		})
+	}
+}
+
 func TestBuildResourceRayContainerImage(t *testing.T) {
 	assert.NoError(t, config.SetK8sPluginConfig(&config.K8sPluginConfig{}))
 
@@ -279,6 +325,31 @@ func TestBuildResourceRayContainerImage(t *testing.T) {
 	}
 }
 
+func TestBuildResourceRayEntrypointPreservesEmptyArgs(t *testing.T) {
+	// Regression test: empty string args must be preserved when converting
+	// container args (yaml array) to the RayJob entrypoint string.
+	rayJobResourceHandler := rayJobResourceHandler{}
+	assert.NoError(t, config.SetK8sPluginConfig(&config.K8sPluginConfig{}))
+
+	rayJob := dummyRayCustomObj()
+	taskTemplate := dummyRayTaskTemplate("ray-id", rayJob)
+	taskTemplate.GetContainer().Args = []string{
+		"pyflyte-map-execute", "--resolver", "ArrayNodeMapTaskResolver",
+		"--", "vars", "", "resolver", "default_task_resolver",
+		"task-module", "some_module", "task-name", "some_task",
+	}
+
+	rayCtx := dummyRayTaskContext(taskTemplate, resourceRequirements, nil, "", serviceAccount)
+	r, err := rayJobResourceHandler.BuildResource(context.TODO(), rayCtx)
+	assert.Nil(t, err)
+	assert.NotNil(t, r)
+
+	rayJobObj, ok := r.(*rayv1.RayJob)
+	assert.True(t, ok)
+
+	assert.Contains(t, rayJobObj.Spec.Entrypoint, "vars '' resolver")
+}
+
 func TestBuildPodTemplate(t *testing.T) {
 	taskTemplate := dummyRayTaskTemplate("id", dummyRayCustomObj())
 	resources := &corev1.ResourceRequirements{
@@ -299,10 +370,13 @@ func TestBuildPodTemplate(t *testing.T) {
 		},
 	}
 
+	customServiceAccount := "custom-sa"
+
 	customPodSpec :=
 		&core.K8SPod{
 			PodSpec: transformStructToStructPB(t, &corev1.PodSpec{
-				Tolerations: toleration,
+				Tolerations:        toleration,
+				ServiceAccountName: customServiceAccount,
 			}),
 			Metadata: &core.K8SObjectMetadata{
 				Labels:      map[string]string{"new-label-1": "val1"},
@@ -318,6 +392,7 @@ func TestBuildPodTemplate(t *testing.T) {
 	expectedAnnotations := map[string]string{"annotation-1": "val1", "new-annotation-1": "val1"}
 	assert.Equal(t, expectedLabels, podSpec.Labels)
 	assert.Equal(t, expectedAnnotations, podSpec.Annotations)
+	assert.Equal(t, customServiceAccount, podSpec.Spec.ServiceAccountName)
 
 	workerGroupSpec := plugins.WorkerGroupSpec{K8SPod: customPodSpec}
 	podSpec, err = buildWorkerPodTemplate(&basePodSpec.Containers[0], basePodSpec, objectMeta, taskContext, &workerGroupSpec)
@@ -325,6 +400,7 @@ func TestBuildPodTemplate(t *testing.T) {
 	assert.Equal(t, toleration, podSpec.Spec.Tolerations)
 	assert.Equal(t, expectedLabels, podSpec.Labels)
 	assert.Equal(t, expectedAnnotations, podSpec.Annotations)
+	assert.Equal(t, customServiceAccount, podSpec.Spec.ServiceAccountName)
 }
 
 func TestBuildResourceRayExtendedResources(t *testing.T) {
@@ -1012,6 +1088,59 @@ func TestInjectLogsSidecar(t *testing.T) {
 	}
 }
 
+func TestBuildResourceRayMissingPrimaryContainer(t *testing.T) {
+	// When the pod spec has no container matching the primary container name,
+	// BuildResource should return an error.
+	rayJobResourceHandler := rayJobResourceHandler{}
+	assert.NoError(t, config.SetK8sPluginConfig(&config.K8sPluginConfig{}))
+
+	rayJob := dummyRayCustomObj()
+	taskTemplate := &core.TaskTemplate{
+		Id:   &core.Identifier{Name: "ray-id"},
+		Type: "container",
+		Target: transformPodSpecToTaskTemplateTarget(&corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "not-the-primary",
+					Image: testImage,
+				},
+			},
+		}),
+		Custom: transformRayJobToCustomObj(rayJob),
+		Config: map[string]string{
+			flytek8s.PrimaryContainerKey: "my-primary",
+		},
+	}
+	rayCtx := dummyRayTaskContext(taskTemplate, resourceRequirements, nil, "", serviceAccount)
+	_, err := rayJobResourceHandler.BuildResource(context.TODO(), rayCtx)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "my-primary")
+}
+
+func TestGetTaskPhaseFailedRetryable(t *testing.T) {
+	// Verify that a failed Ray job returns a retryable failure with the
+	// reason and message from the RayJob status.
+	ctx := context.Background()
+	rayJobResourceHandler := rayJobResourceHandler{}
+	pluginCtx := newPluginContext(k8s.PluginState{})
+
+	rayObject := &rayv1.RayJob{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-ray-job",
+		},
+	}
+	rayObject.Status.JobDeploymentStatus = rayv1.JobDeploymentStatusFailed
+	rayObject.Status.Reason = "OOMKilled"
+	rayObject.Status.Message = "head node ran out of memory"
+
+	phaseInfo, err := rayJobResourceHandler.GetTaskPhase(ctx, pluginCtx, rayObject)
+	assert.NoError(t, err)
+	assert.Equal(t, pluginsCore.PhaseRetryableFailure, phaseInfo.Phase())
+	assert.Contains(t, phaseInfo.Err().GetMessage(), "test-ray-job")
+	assert.Contains(t, phaseInfo.Err().GetMessage(), "OOMKilled")
+	assert.Contains(t, phaseInfo.Err().GetMessage(), "head node ran out of memory")
+}
+
 func newPluginContext(pluginState k8s.PluginState) k8s.PluginContext {
 	plg := &mocks2.PluginContext{}
 
@@ -1052,6 +1181,10 @@ func newPluginContext(pluginState k8s.PluginState) k8s.PluginContext {
 
 	plg.EXPECT().PluginStateReader().Return(&pluginStateReaderMock)
 
+	taskReader := &mocks.TaskReader{}
+	taskReader.EXPECT().Read(mock.Anything).Return(&core.TaskTemplate{}, nil)
+	plg.EXPECT().TaskReader().Return(taskReader)
+
 	return plg
 }
 
@@ -1079,7 +1212,7 @@ func TestGetTaskPhase(t *testing.T) {
 		{rayv1.JobDeploymentStatusInitializing, pluginsCore.PhaseInitializing, false},
 		{rayv1.JobDeploymentStatusRunning, pluginsCore.PhaseRunning, false},
 		{rayv1.JobDeploymentStatusComplete, pluginsCore.PhaseSuccess, false},
-		{rayv1.JobDeploymentStatusFailed, pluginsCore.PhasePermanentFailure, false},
+		{rayv1.JobDeploymentStatusFailed, pluginsCore.PhaseRetryableFailure, false},
 		{rayv1.JobDeploymentStatusSuspended, pluginsCore.PhaseQueued, false},
 		{rayv1.JobDeploymentStatusSuspending, pluginsCore.PhaseQueued, false},
 	}
@@ -1119,6 +1252,30 @@ func TestGetTaskPhaseIncreasePhaseVersion(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, phaseInfo.Version(), pluginsCore.DefaultPhaseVersion+1)
+}
+
+// A new RayJob (empty JobDeploymentStatus) must still go through
+// MaybeUpdatePhaseVersionFromPluginContext so that updates (e.g. log links) are
+// reflected via a phase version bump rather than being dropped by an early exit.
+func TestGetTaskPhaseNewJobIncreasePhaseVersion(t *testing.T) {
+	rayJobResourceHandler := rayJobResourceHandler{}
+
+	ctx := context.TODO()
+
+	pluginState := k8s.PluginState{
+		Phase:        pluginsCore.PhaseQueued,
+		PhaseVersion: pluginsCore.DefaultPhaseVersion,
+		Reason:       "task submitted to K8s",
+	}
+	pluginCtx := newPluginContext(pluginState)
+
+	rayObject := &rayv1.RayJob{}
+	rayObject.Status.JobDeploymentStatus = rayv1.JobDeploymentStatusNew
+	phaseInfo, err := rayJobResourceHandler.GetTaskPhase(ctx, pluginCtx, rayObject)
+
+	assert.NoError(t, err)
+	assert.Equal(t, pluginsCore.PhaseQueued.String(), phaseInfo.Phase().String())
+	assert.Equal(t, pluginsCore.DefaultPhaseVersion+1, phaseInfo.Version())
 }
 
 func TestGetEventInfo_LogTemplates(t *testing.T) {
@@ -1205,14 +1362,40 @@ func TestGetEventInfo_LogTemplates(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "ray job start time",
+			rayJob: rayv1.RayJob{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-namespace",
+					CreationTimestamp: metav1.Time{
+						Time: time.Unix(0, 0),
+					},
+				},
+				Status: rayv1.RayJobStatus{
+					JobId: "ray-job-1",
+				},
+			},
+			logPlugin: tasklog.TemplateLogPlugin{
+				DisplayName:  "ray job ID",
+				TemplateURIs: []tasklog.TemplateURI{"http://test/{{ .PodRFC3339StartTime }}/{{ .PodUnixStartTime }}"},
+			},
+			expectedTaskLogs: []*core.TaskLog{
+				{
+					Name: "ray job ID",
+					Uri:  fmt.Sprintf("http://test/%s/0", time.Unix(0, 0).Format(time.RFC3339)),
+				},
+			},
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			taskTemplate := dummyRayTaskTemplate("ray-id", dummyRayCustomObj())
 			ti, err := getEventInfoForRayJob(
 				logs.LogConfig{Templates: []tasklog.TemplateLogPlugin{tc.logPlugin}},
 				pluginCtx,
 				&tc.rayJob,
+				taskTemplate,
 			)
 			assert.NoError(t, err)
 			assert.Equal(t, tc.expectedTaskLogs, ti.Logs)
@@ -1308,10 +1491,13 @@ func TestGetEventInfo_LogTemplates_V1(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			taskTemplate := dummyRayTaskTemplate("ray-id", dummyRayCustomObj())
+
 			ti, err := getEventInfoForRayJob(
 				logs.LogConfig{Templates: []tasklog.TemplateLogPlugin{tc.logPlugin}},
 				pluginCtx,
 				&tc.rayJob,
+				taskTemplate,
 			)
 			assert.NoError(t, err)
 			assert.Equal(t, tc.expectedTaskLogs, ti.Logs)
@@ -1363,8 +1549,9 @@ func TestGetEventInfo_DashboardURL(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			taskTemplate := dummyRayTaskTemplate("ray-id", dummyRayCustomObj())
 			assert.NoError(t, SetConfig(&Config{DashboardURLTemplate: &tc.dashboardURLTemplate}))
-			ti, err := getEventInfoForRayJob(logs.LogConfig{}, pluginCtx, &tc.rayJob)
+			ti, err := getEventInfoForRayJob(logs.LogConfig{}, pluginCtx, &tc.rayJob, taskTemplate)
 			assert.NoError(t, err)
 			assert.Equal(t, tc.expectedTaskLogs, ti.Logs)
 		})
@@ -1415,17 +1602,51 @@ func TestGetEventInfo_DashboardURL_V1(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			taskTemplate := dummyRayTaskTemplate("ray-id", dummyRayCustomObj())
+
 			assert.NoError(t, SetConfig(&Config{DashboardURLTemplate: &tc.dashboardURLTemplate}))
-			ti, err := getEventInfoForRayJob(logs.LogConfig{}, pluginCtx, &tc.rayJob)
+			ti, err := getEventInfoForRayJob(logs.LogConfig{}, pluginCtx, &tc.rayJob, taskTemplate)
 			assert.NoError(t, err)
 			assert.Equal(t, tc.expectedTaskLogs, ti.Logs)
 		})
 	}
 }
 
+func TestGetEventInfo_DynamicLogLinks(t *testing.T) {
+	pluginCtx := newPluginContext(k8s.PluginState{})
+
+	dynamicLinks := map[string]tasklog.TemplateLogPlugin{
+		"test-dynamic-link": {
+			TemplateURIs: []tasklog.TemplateURI{"https://some-service.com/{{.taskConfig.dynamicParam}}"},
+		},
+	}
+
+	taskTemplate := dummyRayTaskTemplate("ray-id", dummyRayCustomObj())
+	taskTemplate.Config = map[string]string{
+		"link_type":    "test-dynamic-link",
+		"dynamicParam": "dynamic-value",
+	}
+
+	rayJob := rayv1.RayJob{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "test-namespace",
+		},
+	}
+
+	ti, err := getEventInfoForRayJob(
+		logs.LogConfig{DynamicLogLinks: dynamicLinks},
+		pluginCtx,
+		&rayJob,
+		taskTemplate,
+	)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(ti.Logs))
+	assert.Equal(t, "https://some-service.com/dynamic-value", ti.Logs[0].GetUri())
+}
+
 func TestGetPropertiesRay(t *testing.T) {
 	rayJobResourceHandler := rayJobResourceHandler{}
-	expected := k8s.PluginProperties{}
+	expected := k8s.PluginProperties{GeneratedNameMaxLength: ptr.To[int](47)}
 	assert.Equal(t, expected, rayJobResourceHandler.GetProperties())
 }
 
@@ -1438,4 +1659,80 @@ func transformStructToStructPB(t *testing.T, obj interface{}) *structpb.Struct {
 	s, err := structpb.NewStruct(podSpecMap)
 	assert.Nil(t, err)
 	return s
+}
+
+func TestBuildAutoscalerOptions(t *testing.T) {
+	t.Run("nil input returns nil", func(t *testing.T) {
+		assert.Nil(t, buildAutoscalerOptions(nil))
+	})
+
+	t.Run("idle timeout propagated", func(t *testing.T) {
+		result := buildAutoscalerOptions(&plugins.AutoscalerOptions{IdleTimeoutSeconds: 30})
+		require.NotNil(t, result)
+		require.NotNil(t, result.IdleTimeoutSeconds)
+		assert.Equal(t, int32(30), *result.IdleTimeoutSeconds)
+	})
+
+	t.Run("upscaling mode set when non-empty", func(t *testing.T) {
+		result := buildAutoscalerOptions(&plugins.AutoscalerOptions{UpscalingMode: plugins.AutoscalerOptions_UPSCALING_MODE_CONSERVATIVE})
+		require.NotNil(t, result)
+		require.NotNil(t, result.UpscalingMode)
+		assert.Equal(t, rayv1.UpscalingMode("Conservative"), *result.UpscalingMode)
+	})
+
+	t.Run("upscaling mode nil when empty", func(t *testing.T) {
+		result := buildAutoscalerOptions(&plugins.AutoscalerOptions{UpscalingMode: plugins.AutoscalerOptions_UPSCALING_MODE_UNSPECIFIED})
+		require.NotNil(t, result)
+		assert.Nil(t, result.UpscalingMode)
+	})
+
+	t.Run("image set when non-empty", func(t *testing.T) {
+		result := buildAutoscalerOptions(&plugins.AutoscalerOptions{Image: "my-image:latest"})
+		require.NotNil(t, result)
+		require.NotNil(t, result.Image)
+		assert.Equal(t, "my-image:latest", *result.Image)
+	})
+
+	t.Run("idle timeout zero should not be set", func(t *testing.T) {
+		result := buildAutoscalerOptions(&plugins.AutoscalerOptions{})
+		require.NotNil(t, result)
+		assert.Nil(t, result.IdleTimeoutSeconds)
+	})
+
+	t.Run("image nil when empty", func(t *testing.T) {
+		result := buildAutoscalerOptions(&plugins.AutoscalerOptions{Image: ""})
+		require.NotNil(t, result)
+		assert.Nil(t, result.Image)
+	})
+
+	t.Run("resources requests and limits converted", func(t *testing.T) {
+		result := buildAutoscalerOptions(&plugins.AutoscalerOptions{
+			Resources: &core.Resources{
+				Requests: []*core.Resources_ResourceEntry{
+					{Name: core.Resources_CPU, Value: "250m"},
+					{Name: core.Resources_MEMORY, Value: "512Mi"},
+				},
+				Limits: []*core.Resources_ResourceEntry{
+					{Name: core.Resources_CPU, Value: "1"},
+					{Name: core.Resources_MEMORY, Value: "1Gi"},
+				},
+			},
+		})
+		require.NotNil(t, result)
+		require.NotNil(t, result.Resources)
+		assert.Equal(t, resource.MustParse("250m"), result.Resources.Requests[corev1.ResourceCPU])
+		assert.Equal(t, resource.MustParse("512Mi"), result.Resources.Requests[corev1.ResourceMemory])
+		assert.Equal(t, resource.MustParse("1"), result.Resources.Limits[corev1.ResourceCPU])
+		assert.Equal(t, resource.MustParse("1Gi"), result.Resources.Limits[corev1.ResourceMemory])
+	})
+
+	t.Run("env literal value", func(t *testing.T) {
+		result := buildAutoscalerOptions(&plugins.AutoscalerOptions{
+			Env: []*core.KeyValuePair{{Key: "FOO", Value: "bar"}},
+		})
+		require.NotNil(t, result)
+		require.Len(t, result.Env, 1)
+		assert.Equal(t, "FOO", result.Env[0].Name)
+		assert.Equal(t, "bar", result.Env[0].Value)
+	})
 }

@@ -5,10 +5,21 @@ metadata:
   name: {{ template "flyteconsole.name" . }}
   namespace: {{ template "flyte.namespace" . }}
   labels: {{ include "flyteconsole.labels" . | nindent 4 }}
+  {{- if .Values.flyteconsole.annotations }}
+  annotations:
+    {{- with .Values.flyteconsole.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
 spec:
+  {{- if not .Values.flyteconsole.autoscaling.enabled }}
   replicas: {{ .Values.flyteconsole.replicaCount }}
+  {{- end }}
   selector:
     matchLabels: {{ include "flyteconsole.selectorLabels" . | nindent 6 }}
+  {{- with .Values.flyteconsole.strategy }}
+  strategy: {{ tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
   template:
     metadata:
       annotations:

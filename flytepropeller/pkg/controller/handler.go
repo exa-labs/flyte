@@ -213,7 +213,7 @@ func (p *Propeller) Handle(ctx context.Context, namespace, name string) error {
 	if w.GetExecutionStatus().IsTerminated() {
 		// Checking for the old finalizer for backwards compatibility
 		// This should be eventually removed
-		if HasCompletedLabel(w) && !controllerutil.ContainsFinalizer(w, Finalizer) && !controllerutil.ContainsFinalizer(w, OldFinalizer) {
+		if HasCompletedLabel(w) && !controllerutil.ContainsFinalizer(w, Finalizer) {
 			logger.Debugf(ctx, "Workflow is terminated.")
 			// This workflow had previously completed, let us ignore it
 			return nil
@@ -329,8 +329,6 @@ func (p *Propeller) streak(ctx context.Context, w *v1alpha1.FlyteWorkflow, wfClo
 			// We add a completed label so that we can avoid polling for this workflow
 			SetCompletedLabel(mutatedWf, time.Now())
 			_ = controllerutil.RemoveFinalizer(mutatedWf, Finalizer)
-			// Backwards compatibility. This should eventually be removed
-			_ = controllerutil.RemoveFinalizer(mutatedWf, OldFinalizer)
 		}
 	}
 
@@ -347,7 +345,7 @@ func (p *Propeller) streak(ctx context.Context, w *v1alpha1.FlyteWorkflow, wfClo
 			Code:    "ExecutionNotFound",
 			Message: "Workflow execution not found in flyteadmin.",
 		})
-		if _, e := p.wfStore.Update(ctx, mutableW, workflowstore.PriorityClassCritical); e != nil {
+		if _, e := p.wfStore.Update(ctx, mutableW); e != nil {
 			logger.Errorf(ctx, "Failed to record an ExecutionNotFound workflow as failed, reason: %s. Retrying...", e)
 			return nil, e
 		}
@@ -367,20 +365,16 @@ func (p *Propeller) streak(ctx context.Context, w *v1alpha1.FlyteWorkflow, wfClo
 			Code:    string(eventsErr.EventIncompatibleCusterError),
 			Message: fmt.Sprintf("Workflow execution cluster reassigned: %v", err),
 		})
-		if _, e := p.wfStore.Update(ctx, mutableW, workflowstore.PriorityClassCritical); e != nil {
+		if _, e := p.wfStore.Update(ctx, mutableW); e != nil {
 			logger.Errorf(ctx, "Failed to record an EventIncompatibleClusterError workflow as failed, reason: %s. Retrying...", e)
 			return nil, e
 		}
 		return nil, nil
 	}
 
-	// TODO we will need to call updatestatus when it is supported. But to preserve metadata like (label/finalizer) we will need to use update
-
-	// update the GetExecutionStatus block of the FlyteWorkflow resource. UpdateStatus will not
-	// allow changes to the Spec of the resource, which is ideal for ensuring
-	// nothing other than resource status has been updated.
+	// update the GetExecutionStatus block of the FlyteWorkflow resource.
 	_, wfStoreUpdateSpan := otelutils.NewSpan(ctx, otelutils.FlytePropellerTracer, "WorkflowStore.Update")
-	newWf, updateErr := p.wfStore.Update(ctx, mutatedWf, workflowstore.PriorityClassCritical)
+	newWf, updateErr := p.wfStore.Update(ctx, mutatedWf)
 	wfStoreUpdateSpan.End()
 	if updateErr != nil {
 		// The update has failed, lets check if this is because the size is too large. If so
@@ -393,8 +387,6 @@ func (p *Propeller) streak(ctx context.Context, w *v1alpha1.FlyteWorkflow, wfClo
 			// catch potential indefinite update loop
 			if mutatedWf.GetExecutionStatus().IsTerminated() {
 				_ = controllerutil.RemoveFinalizer(mutableW, Finalizer)
-				// Backwards compatibility. This should eventually be removed
-				_ = controllerutil.RemoveFinalizer(mutableW, OldFinalizer)
 				SetDefinitionVersionIfEmpty(mutableW, v1alpha1.LatestWorkflowDefinitionVersion)
 				SetCompletedLabel(mutableW, time.Now())
 				msg := fmt.Sprintf("Workflow size has breached threshold. Finalized with status: %v", mutatedWf.GetExecutionStatus().GetPhase())
@@ -410,7 +402,7 @@ func (p *Propeller) streak(ctx context.Context, w *v1alpha1.FlyteWorkflow, wfClo
 					Message: "Workflow execution state is too large for Flyte to handle.",
 				})
 			}
-			if _, e := p.wfStore.Update(ctx, mutableW, workflowstore.PriorityClassCritical); e != nil {
+			if _, e := p.wfStore.Update(ctx, mutableW); e != nil {
 				logger.Errorf(ctx, "Failed recording a large workflow as failed, reason: %s. Retrying...", e)
 				return nil, e
 			}
