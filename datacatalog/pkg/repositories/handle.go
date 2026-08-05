@@ -15,7 +15,7 @@ import (
 )
 
 const datacatalogStartupAdvisoryLock int64 = 0x464c595445434154
-const advisoryLockTimeout = "30s"
+const advisoryLockTimeout = "5min"
 
 type DBHandle struct {
 	db *gorm.DB
@@ -104,7 +104,7 @@ func withAdvisoryLock(ctx context.Context, db *gorm.DB, key int64, do func(db *g
 		return err
 	}
 	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", key); err != nil {
-		return fmt.Errorf("could not acquire PostgreSQL advisory lock %d: %w", key, err)
+		return fmt.Errorf("could not acquire PostgreSQL advisory lock %d: another replica is holding the migration lock; this is expected to be transient: %w", key, err)
 	}
 	defer func() {
 		_, _ = conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", key)
