@@ -26,8 +26,8 @@ jobs:
 
       - name: Add required Helm repositories
         run: |
-          helm repo add twun https://helm.twun.io/
-          helm repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/
+          helm repo add twun https://twuni.github.io/docker-registry.helm
+          helm repo add kubernetes-dashboard https://kubernetes-retired.github.io/dashboard/
           helm repo add bitnami https://charts.bitnami.com/bitnami
           helm repo update
 
