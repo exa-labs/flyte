@@ -39,3 +39,37 @@ jobs:
           skip_existing: true
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Regenerate Helm repository index
+        env:
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        run: |
+          set -euo pipefail
+
+          rm -rf .cr-index .cr-release-packages
+          mkdir -p .cr-release-packages
+
+          while IFS=$'\t' read -r tag asset; do
+            gh release download "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern "$asset" \
+              --dir .cr-release-packages \
+              --clobber
+          done < <(
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name as $tag | .assets[] | select(.name | endswith(".tgz")) | [$tag, .name] | @tsv'
+          )
+
+          repo="${GITHUB_REPOSITORY#*/}"
+          cr index \
+            --owner "$GITHUB_REPOSITORY_OWNER" \
+            --git-repo "$repo" \
+            --token "$CR_TOKEN" \
+            --package-path .cr-release-packages \
+            --index-path .cr-index/index.yaml \
+            --remote origin \
+            --pages-branch gh-pages \
+            --pages-index-path index.yaml \
+            --push
