@@ -18,9 +18,25 @@ metadata:
     {{- tpl ( .Values.deployment.annotations | toYaml ) . | nindent 4 }}
     {{- end }}
 spec:
-  replicas: 1
+  {{- $strategyType := .Values.strategy.type }}
+  {{- if .Values.ha.enabled }}
+  {{- $strategyType = "RollingUpdate" }}
+  {{- end }}
+  {{- if gt (int .Values.replicaCount) 1 }}
+  {{- if not .Values.ha.enabled }}
+  {{- fail "replicaCount > 1 requires ha.enabled=true" }}
+  {{- end }}
+  {{- if not .Values.ha.leaderElection.enabled }}
+  {{- fail "replicaCount > 1 requires ha.leaderElection.enabled=true" }}
+  {{- end }}
+  {{- end }}
+  replicas: {{ .Values.replicaCount }}
   strategy:
-    type: Recreate
+    type: {{ $strategyType }}
+    {{- if eq $strategyType "RollingUpdate" }}
+    rollingUpdate:
+      {{- toYaml .Values.strategy.rollingUpdate | nindent 6 }}
+    {{- end }}
   selector:
     matchLabels: {{- include "flyte-binary.selectorLabels" . | nindent 6 }}
   template:
@@ -53,6 +69,10 @@ spec:
         {{- tpl ( .Values.deployment.podAnnotations | toYaml ) . | nindent 8 }}
         {{- end }}
     spec:
+      {{- if .Values.ha.enabled }}
+      affinity:
+        {{- toYaml .Values.ha.affinity | nindent 8 }}
+      {{- end }}
       {{- if .Values.deployment.extraPodSpec }}
       {{- tpl ( .Values.deployment.extraPodSpec | toYaml ) . | nindent 6 }}
       {{- end }}

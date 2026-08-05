@@ -93,6 +93,16 @@ rules:
     - list
     - patch
     - update
+  {{- if .Values.ha.leaderElection.enabled }}
+  - apiGroups:
+    - coordination.k8s.io
+    resources:
+    - leases
+    verbs:
+    - create
+    - get
+    - update
+  {{- end }}
   {{- if .Values.rbac.extraRules }}
   {{- toYaml .Values.rbac.extraRules | nindent 2 }}
   {{- end }}
