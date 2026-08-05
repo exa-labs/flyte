@@ -40,12 +40,41 @@ jobs:
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
 
+      - name: Install chart-releaser
+        env:
+          CHART_RELEASER_VERSION: v1.6.1
+        run: |
+          set -euo pipefail
+
+          case "$(uname -m)" in
+            x86_64) arch=amd64 ;;
+            aarch64) arch=arm64 ;;
+            *)
+              echo "Unsupported runner architecture: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+
+          install_dir="$RUNNER_TEMP/chart-releaser/$CHART_RELEASER_VERSION"
+          archive="$RUNNER_TEMP/chart-releaser.tar.gz"
+          mkdir -p "$install_dir"
+          curl -fsSL \
+            -o "$archive" \
+            "https://github.com/helm/chart-releaser/releases/download/$CHART_RELEASER_VERSION/chart-releaser_${CHART_RELEASER_VERSION#v}_linux_${arch}.tar.gz"
+          tar -xzf "$archive" -C "$install_dir"
+          echo "$install_dir" >> "$GITHUB_PATH"
+          "$install_dir/cr" version
+
       - name: Regenerate Helm repository index
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
           GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
         run: |
           set -euo pipefail
+
+          if ! git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
+            git fetch origin gh-pages:refs/remotes/origin/gh-pages
+          fi
 
           rm -rf .cr-index .cr-release-packages
           mkdir -p .cr-release-packages
