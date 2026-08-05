@@ -88,13 +88,20 @@ tag_to_version() {
     log_info "checking GitHub for tag '${TAG}'"
   fi
   REALTAG=$(github_release "$OWNER/$REPO" "${TAG}") && true
-  if test -z "$REALTAG"; then
+
+  RELEASE_URL="https://api.github.com/repos/${OWNER}/${REPO}/releases/tags/flytectl/${TAG}"
+  STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$RELEASE_URL")
+
+  if [ -n "$REALTAG" ]; then
+    TAG="$REALTAG"
+    VERSION=${TAG#v}
+  elif [ "$STATUS_CODE" -eq 200 ]; then
+    TAG="flytectl/$TAG"
+    VERSION=${TAG#v}
+  else
     log_crit "unable to find '${TAG}' - use 'latest' or see https://github.com/${PREFIX}/releases for details"
     exit 1
   fi
-  # if version starts with 'v', remove it
-  TAG="$REALTAG"
-  VERSION=${TAG#v}
 }
 
 adjust_format() {
@@ -319,21 +326,40 @@ http_download() {
 http_copy() {
   tmp=$(mktemp)
   http_download "${tmp}" "$1" "$2" || return 1
-  # $tmp is an array of dicts where each dict contains a tag_name.
-  # Assume that we can pull the tag_name out of the json using `jq`.
-  # We want to filter out the elements that do not have a tag_name prefixed
-  # with `flytectl/`.
-  body=$(cat "$tmp" |  jq 'map(select(.tag_name | startswith("flytectl/"))) | .[].tag_name')
+  body=$(cat "$tmp")
   rm -f "${tmp}"
   echo "$body"
+}
+
+github_releases() {
+  owner_repo=$1
+  page=1
+  tmp=$(mktemp)
+  while :; do
+    giturl="https://api.github.com/repos/${owner_repo}/releases?per_page=100&page=${page}"
+    http_download "${tmp}" "$giturl" "Accept:application/json" || {
+      rm -f "${tmp}"
+      return 1
+    }
+    release_count=$(jq 'length' "${tmp}") || {
+      rm -f "${tmp}"
+      return 1
+    }
+    test "$release_count" -eq 0 && break
+    jq 'map(select((.tag_name // "") | startswith("flytectl/"))) | .[].tag_name' "${tmp}" || {
+      rm -f "${tmp}"
+      return 1
+    }
+    page=$((page + 1))
+  done
+  rm -f "${tmp}"
 }
 
 github_release() {
   owner_repo=$1
   version=$2
   test -z "$version" && version="latest"
-  giturl="https://api.github.com/repos/${owner_repo}/releases"
-  json=$(http_copy "$giturl" "Accept:application/json")
+  json=$(github_releases "$owner_repo")
   test -z "$json" && return 1
   if [ "$version" = "latest" ]; then
     # Get the first element of the filtered json array

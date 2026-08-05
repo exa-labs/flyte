@@ -2,6 +2,7 @@ package array
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -21,20 +22,14 @@ import (
 	"github.com/flyteorg/flyte/flytepropeller/pkg/controller/config"
 	"github.com/flyteorg/flyte/flytepropeller/pkg/controller/executors"
 	"github.com/flyteorg/flyte/flytepropeller/pkg/controller/nodes/common"
-	"github.com/flyteorg/flyte/flytepropeller/pkg/controller/nodes/errors"
+	flyteErr "github.com/flyteorg/flyte/flytepropeller/pkg/controller/nodes/errors"
 	"github.com/flyteorg/flyte/flytepropeller/pkg/controller/nodes/handler"
 	"github.com/flyteorg/flyte/flytepropeller/pkg/controller/nodes/interfaces"
 	"github.com/flyteorg/flyte/flytepropeller/pkg/controller/nodes/task/k8s"
 	"github.com/flyteorg/flyte/flytestdlib/bitarray"
-	stdConfig "github.com/flyteorg/flyte/flytestdlib/config"
 	"github.com/flyteorg/flyte/flytestdlib/logger"
 	"github.com/flyteorg/flyte/flytestdlib/promutils"
 	"github.com/flyteorg/flyte/flytestdlib/storage"
-)
-
-const (
-	// value is 3 days of seconds which is covered by 18 bits (262144)
-	MAX_DELTA_TIMESTAMP = 259200
 )
 
 var (
@@ -124,11 +119,11 @@ func (a *arrayNodeHandler) Abort(ctx context.Context, nCtx interfaces.NodeExecut
 	}
 
 	if messageCollector.Length() > 0 {
-		return fmt.Errorf(messageCollector.Summary(events.MaxErrorMessageLength)) //nolint:govet,staticcheck
+		return errors.New(messageCollector.Summary(events.MaxErrorMessageLength))
 	}
 
 	// update state for subNodes
-	if err := eventRecorder.finalize(ctx, nCtx, taskPhase, 0, a.eventConfig); err != nil {
+	if err := eventRecorder.finalize(ctx, nCtx, taskPhase, 0, a.eventConfig, arrayNodeState.Error); err != nil {
 		// a task event with abort phase is already emitted when handling ArrayNodePhaseFailing
 		if !eventsErr.IsAlreadyExists(err) {
 			logger.Errorf(ctx, "ArrayNode event recording failed: [%s]", err.Error())
@@ -172,7 +167,7 @@ func (a *arrayNodeHandler) Finalize(ctx context.Context, nCtx interfaces.NodeExe
 	}
 
 	if messageCollector.Length() > 0 {
-		return fmt.Errorf(messageCollector.Summary(events.MaxErrorMessageLength)) //nolint:govet,staticcheck
+		return errors.New(messageCollector.Summary(events.MaxErrorMessageLength))
 	}
 
 	return nil
@@ -216,7 +211,7 @@ func (a *arrayNodeHandler) Handle(ctx context.Context, nCtx interfaces.NodeExecu
 			if err != nil {
 				errMsg := fmt.Sprintf("Failed to validate literal type for [%s] with err: %s", key, err)
 				return handler.DoTransition(handler.TransitionTypeEphemeral,
-					handler.PhaseInfoFailure(idlcore.ExecutionError_USER, errors.IDLNotFoundErr, errMsg, nil),
+					handler.PhaseInfoFailure(idlcore.ExecutionError_USER, flyteErr.IDLNotFoundErr, errMsg, nil),
 				), nil
 			}
 			if variable.GetOffloadedMetadata() != nil {
@@ -225,7 +220,7 @@ func (a *arrayNodeHandler) Handle(ctx context.Context, nCtx interfaces.NodeExecu
 				err := common.ReadLargeLiteral(ctx, nCtx.DataStore(), variable)
 				if err != nil {
 					return handler.DoTransition(handler.TransitionTypeEphemeral,
-						handler.PhaseInfoFailure(idlcore.ExecutionError_SYSTEM, errors.RuntimeExecutionError, "couldn't read the offloaded literal", nil),
+						handler.PhaseInfoFailure(idlcore.ExecutionError_SYSTEM, flyteErr.RuntimeExecutionError, "couldn't read the offloaded literal", nil),
 					), nil
 				}
 			}
@@ -236,7 +231,7 @@ func (a *arrayNodeHandler) Handle(ctx context.Context, nCtx interfaces.NodeExecu
 					size = collectionLength
 				} else if size != collectionLength {
 					return handler.DoTransition(handler.TransitionTypeEphemeral,
-						handler.PhaseInfoFailure(idlcore.ExecutionError_USER, errors.InvalidArrayLength,
+						handler.PhaseInfoFailure(idlcore.ExecutionError_USER, flyteErr.InvalidArrayLength,
 							fmt.Sprintf("input arrays have different lengths: expecting '%d' found '%d'", size, collectionLength), nil),
 					), nil
 				}
@@ -249,7 +244,7 @@ func (a *arrayNodeHandler) Handle(ctx context.Context, nCtx interfaces.NodeExecu
 				size = 1
 			} else {
 				return handler.DoTransition(handler.TransitionTypeEphemeral,
-					handler.PhaseInfoFailure(idlcore.ExecutionError_USER, errors.InvalidArrayLength, "no input array provided", nil),
+					handler.PhaseInfoFailure(idlcore.ExecutionError_USER, flyteErr.InvalidArrayLength, "no input array provided", nil),
 				), nil
 			}
 		}
@@ -257,8 +252,18 @@ func (a *arrayNodeHandler) Handle(ctx context.Context, nCtx interfaces.NodeExecu
 		// initialize ArrayNode state
 		maxSystemFailuresValue := int(config.GetConfig().NodeConfig.MaxNodeRetriesOnSystemFailures)
 		maxAttemptsValue := int(config.GetConfig().NodeConfig.DefaultMaxAttempts)
-		if nCtx.Node().GetRetryStrategy() != nil && nCtx.Node().GetRetryStrategy().MinAttempts != nil && *nCtx.Node().GetRetryStrategy().MinAttempts != 1 {
-			maxAttemptsValue = *nCtx.Node().GetRetryStrategy().MinAttempts
+
+		retryStrategy := nCtx.Node().GetRetryStrategy()
+		subNodeRetryStrategy := nCtx.Node().GetArrayNode().GetSubNodeSpec().GetRetryStrategy()
+
+		if retryStrategy != nil && retryStrategy.MinAttempts != nil && *retryStrategy.MinAttempts != 1 {
+			maxAttemptsValue = *retryStrategy.MinAttempts
+		}
+
+		// Ensure that the bitarray used for tracking retry attempts is large enough to accommodate the retry budget
+		// that is potentially set on the task decorator
+		if subNodeRetryStrategy != nil && subNodeRetryStrategy.MinAttempts != nil && *subNodeRetryStrategy.MinAttempts != 1 {
+			maxAttemptsValue = max(maxAttemptsValue, *subNodeRetryStrategy.MinAttempts)
 		}
 
 		if config.GetConfig().NodeConfig.IgnoreRetryCause {
@@ -277,7 +282,7 @@ func (a *arrayNodeHandler) Handle(ctx context.Context, nCtx interfaces.NodeExecu
 			{arrayReference: &arrayNodeState.SubNodeTaskPhases, maxValue: len(core.Phases) - 1},
 			{arrayReference: &arrayNodeState.SubNodeRetryAttempts, maxValue: maxAttemptsValue},
 			{arrayReference: &arrayNodeState.SubNodeSystemFailures, maxValue: maxSystemFailuresValue},
-			{arrayReference: &arrayNodeState.SubNodeDeltaTimestamps, maxValue: MAX_DELTA_TIMESTAMP},
+			{arrayReference: &arrayNodeState.SubNodeDeltaTimestamps, maxValue: int(config.GetConfig().ArrayNode.MaxDeltaTimestamp.Seconds())},
 		} {
 
 			*item.arrayReference, err = bitarray.NewCompactArray(uint(size), bitarray.Item(item.maxValue)) // #nosec G115
@@ -457,7 +462,9 @@ func (a *arrayNodeHandler) Handle(ctx context.Context, nCtx interfaces.NodeExecu
 		}
 
 		// if there is a failing node set the error message if it has not been previous set
-		if failingCount > 0 && arrayNodeState.Error == nil {
+		if failingCount > 0 || failedCount > 0 && arrayNodeState.Error == nil {
+			// only set the error message as the collector summary can be the concatenation of multiple errors
+			// evaluated in the same evaluation
 			arrayNodeState.Error = &idlcore.ExecutionError{
 				Message: subNodeFailureCollector.Summary(events.MaxErrorMessageLength),
 			}
@@ -562,7 +569,7 @@ func (a *arrayNodeHandler) Handle(ctx context.Context, nCtx interfaces.NodeExecu
 			taskNode, err := nCtx.ExecutionContext().GetTask(taskID)
 			if err != nil {
 				return handler.DoTransition(handler.TransitionTypeEphemeral, handler.PhaseInfoFailure(idlcore.ExecutionError_SYSTEM,
-					errors.BadSpecificationError, fmt.Sprintf("failed to find ArrayNode subNode task with id: '%s'", taskID), nil)), nil
+					flyteErr.BadSpecificationError, fmt.Sprintf("failed to find ArrayNode subNode task with id: '%s'", taskID), nil)), nil
 			}
 
 			if outputs := taskNode.CoreTask().GetInterface().GetOutputs(); outputs != nil {
@@ -626,7 +633,7 @@ func (a *arrayNodeHandler) Handle(ctx context.Context, nCtx interfaces.NodeExecu
 		}
 
 		// ensure task_execution set to succeeded
-		if err := eventRecorder.finalize(ctx, nCtx, idlcore.TaskExecution_SUCCEEDED, 0, a.eventConfig); err != nil {
+		if err := eventRecorder.finalize(ctx, nCtx, idlcore.TaskExecution_SUCCEEDED, 0, a.eventConfig, arrayNodeState.Error); err != nil {
 			if !eventsErr.IsAlreadyExists(err) {
 				logger.Errorf(ctx, "ArrayNode event recording failed: [%s]", err.Error())
 				return handler.UnknownTransition, err
@@ -641,7 +648,7 @@ func (a *arrayNodeHandler) Handle(ctx context.Context, nCtx interfaces.NodeExecu
 			},
 		)), nil
 	default:
-		return handler.UnknownTransition, errors.Errorf(errors.IllegalStateError, nCtx.NodeID(), "invalid ArrayNode phase %+v", arrayNodeState.Phase)
+		return handler.UnknownTransition, flyteErr.Errorf(flyteErr.IllegalStateError, nCtx.NodeID(), "invalid ArrayNode phase %+v", arrayNodeState.Phase)
 	}
 
 	// if there were changes to subNode status then the eventRecorder will require finalizing to
@@ -665,35 +672,12 @@ func (a *arrayNodeHandler) Handle(ctx context.Context, nCtx interfaces.NodeExecu
 			arrayNodeState.TaskPhaseVersion++
 		}
 
-		maxRetries := config.GetConfig().ArrayNode.MaxTaskPhaseVersionAttempts
-		retries := 0
-		for retries <= maxRetries {
-			err := eventRecorder.finalize(ctx, nCtx, taskPhase, arrayNodeState.TaskPhaseVersion, a.eventConfig)
-
-			if err == nil {
-				break
-			}
-
-			// Handle potential race condition if FlyteWorkflow CRD fails to get synced
-			if eventsErr.IsAlreadyExists(err) {
-				if !incrementTaskPhaseVersion {
-					break
-				}
-				logger.Warnf(ctx, "Event version already exists, bumping version and retrying (%d/%d): [%s]", retries+1, maxRetries, err.Error())
-				arrayNodeState.TaskPhaseVersion++
-			} else {
-				logger.Errorf(ctx, "ArrayNode event recording failed: [%s]", err.Error())
-				return handler.UnknownTransition, err
-			}
-
-			retries++
-			if retries > maxRetries {
-				logger.Errorf(ctx, "ArrayNode event recording failed after %d retries: [%s]", maxRetries, err.Error())
-				return handler.UnknownTransition, err
-			}
+		if err := eventRecorder.finalize(ctx, nCtx, taskPhase, arrayNodeState.TaskPhaseVersion, a.eventConfig, arrayNodeState.Error); err != nil {
+			logger.Errorf(ctx, "ArrayNode event recording failed: [%s]", err.Error())
+			return handler.UnknownTransition, err
 		}
 
-		// if the ArrayNode phase has changed we need to reset the taskPhaseVersion to 0
+		// if the ArrayNode phase has changed, then we need to reset the taskPhaseVersion to 0
 		if currentArrayNodePhase != arrayNodeState.Phase {
 			arrayNodeState.TaskPhaseVersion = 0
 		}
@@ -738,21 +722,9 @@ func New(nodeExecutor interfaces.Node, eventConfig *config.EventConfig, literalO
 		return nil, err
 	}
 
-	eventConfigCopy, err := stdConfig.DeepCopyConfig(eventConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	deepCopiedEventConfig, ok := eventConfigCopy.(*config.EventConfig)
-	if !ok {
-		return nil, fmt.Errorf("deep copy error: expected *config.EventConfig, but got %T", eventConfigCopy)
-	}
-
-	deepCopiedEventConfig.ErrorOnAlreadyExists = true
-
 	arrayScope := scope.NewSubScope("array")
 	return &arrayNodeHandler{
-		eventConfig:                 deepCopiedEventConfig,
+		eventConfig:                 eventConfig,
 		literalOffloadingConfig:     literalOffloadingConfig,
 		gatherOutputsRequestChannel: make(chan *gatherOutputsRequest),
 		metrics:                     newMetrics(arrayScope),
@@ -842,7 +814,10 @@ func (a *arrayNodeHandler) buildArrayNodeContext(ctx context.Context, nCtx inter
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
-	arrayExecutionContext := newArrayExecutionContext(executors.NewExecutionContextWithParentInfo(nCtx.ExecutionContext(), newParentInfo), subNodeIndex)
+	// set new parent info and re-initialize the sub-node's control flow to not share/update the parent wf state
+	arrayExecutionContext := newArrayExecutionContext(
+		executors.NewExecutionContext(nCtx.ExecutionContext(), nCtx.ExecutionContext(), nCtx.ExecutionContext(), newParentInfo, executors.InitializeControlFlow()),
+		subNodeIndex)
 
 	arrayNodeExecutionContextBuilder := newArrayNodeExecutionContextBuilder(a.nodeExecutor.GetNodeExecutionContextBuilder(),
 		subNodeID, subNodeIndex, subNodeStatus, inputReader, eventRecorder)

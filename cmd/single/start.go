@@ -67,18 +67,13 @@ func startClusterResourceController(ctx context.Context) error {
 
 func startAdmin(ctx context.Context, cfg Admin) error {
 	logger.Infof(ctx, "Running Database Migrations...")
-	if err := adminServer.Migrate(ctx); err != nil {
-		return err
-	}
-
-	logger.Infof(ctx, "Seeding default projects...")
 	projects := []string{"flytesnacks"}
 	if len(cfg.SeedProjects) != 0 {
 		projects = cfg.SeedProjects
 	}
 	seedProjects := adminRepositoriesConfig.MergeSeedProjectsWithUniqueNames(projects, cfg.SeedProjectsWithDetails)
 	logger.Infof(ctx, "Seeding default projects... %v", seedProjects)
-	if err := adminServer.SeedProjects(ctx, seedProjects); err != nil {
+	if err := adminServer.MigrateAndSeedProjects(ctx, seedProjects); err != nil {
 		return err
 	}
 

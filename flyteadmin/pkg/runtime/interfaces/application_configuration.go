@@ -17,44 +17,6 @@ import (
 	"github.com/flyteorg/flyte/flytestdlib/database"
 )
 
-// DbConfig is used to for initiating the database connection with the store that holds registered
-// entities (e.g. workflows, tasks, launch plans...)
-type DbConfig struct {
-	DeprecatedHost         string `json:"host" pflag:",deprecated"`
-	DeprecatedPort         int    `json:"port" pflag:",deprecated"`
-	DeprecatedDbName       string `json:"dbname" pflag:",deprecated"`
-	DeprecatedUser         string `json:"username" pflag:",deprecated"`
-	DeprecatedPassword     string `json:"password" pflag:",deprecated"`
-	DeprecatedPasswordPath string `json:"passwordPath" pflag:",deprecated"`
-	DeprecatedExtraOptions string `json:"options" pflag:",deprecated"`
-	DeprecatedDebug        bool   `json:"debug" pflag:",deprecated"`
-
-	EnableForeignKeyConstraintWhenMigrating bool            `json:"enableForeignKeyConstraintWhenMigrating" pflag:",Whether to enable gorm foreign keys when migrating the db"`
-	MaxIdleConnections                      int             `json:"maxIdleConnections" pflag:",maxIdleConnections sets the maximum number of connections in the idle connection pool."`
-	MaxOpenConnections                      int             `json:"maxOpenConnections" pflag:",maxOpenConnections sets the maximum number of open connections to the database."`
-	ConnMaxLifeTime                         config.Duration `json:"connMaxLifeTime" pflag:",sets the maximum amount of time a connection may be reused"`
-	PostgresConfig                          *PostgresConfig `json:"postgres,omitempty"`
-	SQLiteConfig                            *SQLiteConfig   `json:"sqlite,omitempty"`
-}
-
-// SQLiteConfig can be used to configure
-type SQLiteConfig struct {
-	File string `json:"file" pflag:",The path to the file (existing or new) where the DB should be created / stored. If existing, then this will be reused, else a new will be created"`
-}
-
-// PostgresConfig includes specific config options for opening a connection to a postgres database.
-type PostgresConfig struct {
-	Host   string `json:"host" pflag:",The host name of the database server"`
-	Port   int    `json:"port" pflag:",The port name of the database server"`
-	DbName string `json:"dbname" pflag:",The database name"`
-	User   string `json:"username" pflag:",The database user who is connecting to the server."`
-	// Either Password or PasswordPath must be set.
-	Password     string `json:"password" pflag:",The database password."`
-	PasswordPath string `json:"passwordPath" pflag:",Points to the file containing the database password."`
-	ExtraOptions string `json:"options" pflag:",See http://gorm.io/docs/connecting_to_the_database.html for available options passed, in addition to the above."`
-	Debug        bool   `json:"debug" pflag:" Whether or not to start the database connection with debug mode enabled."`
-}
-
 type FeatureGates struct {
 	EnableArtifacts bool `json:"enableArtifacts" pflag:",Enable artifacts feature."`
 }
@@ -116,6 +78,10 @@ type ApplicationConfig struct {
 
 	// Enabling this will instruct operator to use storage (s3/gcs/etc) to offload workflow execution inputs instead of storing them inline in the CRD.
 	UseOffloadedInputs bool `json:"useOffloadedInputs" pflag:",Use offloaded inputs for workflows."`
+
+	InjectIdentityAnnotations bool     `json:"injectIdentityAnnotations"`
+	IdentityAnnotationPrefix  string   `json:"identityAnnotationPrefix"`
+	IdentityAnnotationKeys    []string `json:"identityAnnotationKeys"`
 }
 
 func (a *ApplicationConfig) GetRoleNameKey() string {
@@ -199,6 +165,21 @@ func (a *ApplicationConfig) GetEnvs() *admin.Envs {
 	return &admin.Envs{
 		Values: envs,
 	}
+}
+
+func (a *ApplicationConfig) GetInjectIdentityAnnotations() bool {
+	return a.InjectIdentityAnnotations
+}
+
+func (a *ApplicationConfig) GetIdentityAnnotationPrefix() string {
+	if a.IdentityAnnotationPrefix == "" {
+		return "flyte.org"
+	}
+	return a.IdentityAnnotationPrefix
+}
+
+func (a *ApplicationConfig) GetIdentityAnnotationKeys() []string {
+	return a.IdentityAnnotationKeys
 }
 
 // GetAsWorkflowExecutionConfig returns the WorkflowExecutionConfig as extracted from this object
@@ -311,7 +292,7 @@ func (k KafkaConfig) UpdateSaramaConfig(ctx context.Context, s *sarama.Config) {
 	if k.TLSConfig.Enabled {
 		s.Net.TLS.Enable = true
 		s.Net.TLS.Config = &tls.Config{
-			InsecureSkipVerify: k.TLSConfig.InsecureSkipVerify,
+			InsecureSkipVerify: k.TLSConfig.InsecureSkipVerify, //nolint:gosec
 		}
 		if k.TLSConfig.KeyPath != "" && k.TLSConfig.CertPath != "" {
 			cert, err := tls.LoadX509KeyPair(k.TLSConfig.CertPath, k.TLSConfig.KeyPath)
@@ -321,6 +302,31 @@ func (k KafkaConfig) UpdateSaramaConfig(ctx context.Context, s *sarama.Config) {
 			s.Net.TLS.Config.Certificates = []tls.Certificate{cert}
 		}
 	}
+}
+
+type NatsUserPassAuthConfig struct {
+	// Whether to use user/pass authentication
+	Enabled bool `json:"enabled"`
+	// Username to be used when connecting to the server.
+	User string `json:"user"`
+	// Password to be used when connecting to a server.
+	Password string `json:"password"`
+}
+type NatsTokenAuthConfig struct {
+	// Whether to use token authentication
+	Enabled bool `json:"enabled"`
+	// Token to be used when connecting to the server.
+	Token string `json:"token"`
+}
+
+// This section holds configs for Nats clients
+type NatsConfig struct {
+	// nats broker addresses
+	Servers []string `json:"servers"`
+	// Username/password authentication config
+	UserPassAuthConfig NatsUserPassAuthConfig `json:"userAuthentication"`
+	// Token authentication config
+	TokenAuthConfig NatsTokenAuthConfig `json:"tokenAuthentication"`
 }
 
 // This section holds configuration for the event scheduler used to schedule workflow executions.
@@ -641,6 +647,7 @@ type CloudEventsConfig struct {
 	AWSConfig   AWSConfig   `json:"aws"`
 	GCPConfig   GCPConfig   `json:"gcp"`
 	KafkaConfig KafkaConfig `json:"kafka"`
+	NatsConfig  NatsConfig  `json:"nats"`
 	// Publish events to a pubsub tops
 	EventsPublisherConfig EventsPublisherConfig `json:"eventsPublisher"`
 	// Number of times to attempt recreating a notifications processor client should there be any disruptions.

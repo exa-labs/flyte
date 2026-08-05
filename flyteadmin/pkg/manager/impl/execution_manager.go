@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/flyteorg/flyte/flyteadmin/auth"
 	cloudeventInterfaces "github.com/flyteorg/flyte/flyteadmin/pkg/async/cloudevent/interfaces"
@@ -47,6 +48,11 @@ import (
 
 const childContainerQueueKey = "child_queue"
 
+var activeExecutionPhases = []string{
+	core.WorkflowExecution_QUEUED.String(),
+	core.WorkflowExecution_RUNNING.String(),
+}
+
 type executionSystemMetrics struct {
 	Scope                      promutils.Scope
 	ActiveExecutions           prometheus.Gauge
@@ -62,6 +68,8 @@ type executionSystemMetrics struct {
 	AcceptanceDelay            prometheus.Summary
 	PublishEventError          prometheus.Counter
 	TerminateExecutionFailures prometheus.Counter
+	ConcurrencyCheckDuration   labeled.StopWatch
+	ConcurrencyLimitHits       *prometheus.CounterVec
 }
 
 type executionUserMetrics struct {
@@ -583,6 +591,8 @@ func (m *ExecutionManager) launchSingleTaskExecution(
 		annotations = executionConfig.GetAnnotations().GetValues()
 	}
 
+	annotations = m.addIdentityAnnotations(ctx, annotations)
+
 	var rawOutputDataConfig *admin.RawOutputDataConfig
 	if executionConfig.GetRawOutputDataConfig() != nil {
 		rawOutputDataConfig = executionConfig.GetRawOutputDataConfig()
@@ -1018,6 +1028,9 @@ func (m *ExecutionManager) launchExecution(
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
+	annotations = m.addIdentityAnnotations(ctx, annotations)
+
 	var rawOutputDataConfig *admin.RawOutputDataConfig
 	if executionConfig.GetRawOutputDataConfig() != nil {
 		rawOutputDataConfig = executionConfig.GetRawOutputDataConfig()
@@ -1097,6 +1110,16 @@ func (m *ExecutionManager) launchExecution(
 		Namespace:             namespace,
 	}
 
+	// Check ConcurrencyPolicy for LaunchPlan, this is a means to limit the concurrency of a launch plan across versions
+	// NOTE: There's a potential race condition here. Multiple concurrent requests
+	// might pass this check before the database reflects the newly created executions,
+	// potentially leading to more than 'Max' concurrent executions.
+	if launchPlan.GetSpec().GetConcurrencyPolicy() != nil {
+		if err := checkLaunchPlanConcurrency(ctx, launchPlan, m.db.ExecutionRepo(), m.systemMetrics); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+
 	workflowExecutor := plugins.Get[workflowengineInterfaces.WorkflowExecutor](m.pluginRegistry, plugins.PluginIDWorkflowExecutor)
 	execInfo, execErr := workflowExecutor.Execute(ctx, workflowengineInterfaces.ExecutionData{
 		Namespace:                namespace,
@@ -1154,6 +1177,94 @@ func (m *ExecutionManager) createExecutionModel(
 	m.systemMetrics.SpecSizeBytes.Observe(float64(len(executionModel.Spec)))
 	m.systemMetrics.ClosureSizeBytes.Observe(float64(len(executionModel.Closure)))
 	return workflowExecutionIdentifier, nil
+}
+
+func checkLaunchPlanConcurrency(ctx context.Context, launchPlan *admin.LaunchPlan, executionRepo repositoryInterfaces.ExecutionRepoInterface, metrics executionSystemMetrics) error {
+	lpID := launchPlan.GetId()
+	lpProject := lpID.GetProject()
+	lpDomain := lpID.GetDomain()
+	lpName := lpID.GetName()
+	ctxForTimer := contextutils.WithProjectDomain(ctx, lpProject, lpDomain)
+	ctxForTimer = contextutils.WithLaunchPlanID(ctxForTimer, lpName)
+	defer metrics.ConcurrencyCheckDuration.Start(ctxForTimer).Stop()
+
+	logger.Debugf(ctx, "checking concurrency limits for launch plan %v with policy %+v", lpID, launchPlan.GetSpec().GetConcurrencyPolicy())
+
+	projectFilter, err := common.NewSingleValueFilter(common.Execution, common.Equal, "project", lpProject)
+	if err != nil {
+		return fmt.Errorf("failed to create project filter for concurrency check: %w", err)
+	}
+	domainFilter, err := common.NewSingleValueFilter(common.Execution, common.Equal, "domain", lpDomain)
+	if err != nil {
+		return fmt.Errorf("failed to create domain filter for concurrency check: %w", err)
+
+	}
+
+	lpNameFilter, err := common.NewSingleValueFilter(common.LaunchPlan, common.Equal, "name", lpName)
+	if err != nil {
+		return fmt.Errorf("failed to create launch plan name filter for concurrency check (JOIN): %w", err)
+	}
+
+	phaseFilter, err := common.NewRepeatedValueFilter(common.Execution, common.ValueIn, "phase", activeExecutionPhases)
+	if err != nil {
+		return fmt.Errorf("failed to create phase filter for concurrency check (JOIN): %w", err)
+	}
+
+	/*
+		Count active executions for this launch plan, including an inner join with launch_plans table.
+		This query joins 'executions' with 'launch_plans' to filter by launch plan name across all its versions,
+		and then filters by active execution phases. This benefits from the existing indexes on the join keys (project, domain, name on launch_plans) and the execution phase. In plain SQL this is the expression:
+
+		SELECT
+			COUNT(executions.id)
+		FROM
+			executions
+		INNER JOIN
+			launch_plans ON executions.launch_plan_id = launch_plans.id
+		WHERE
+			executions.project = '${lpProject}'
+			AND executions.domain = '${lpDomain}'
+			AND launch_plans.name = '${lpName}'
+			AND executions.phase IN (
+				'QUEUED',
+				'RUNNING',
+			); -- Values from the activePhases slice
+	*/
+
+	count, err := executionRepo.Count(ctx, repositoryInterfaces.CountResourceInput{
+		InlineFilters: []common.InlineFilter{projectFilter, domainFilter, lpNameFilter, phaseFilter},
+		JoinTableEntities: map[common.Entity]bool{
+			common.LaunchPlan: true,
+		},
+	})
+
+	if err != nil {
+		logger.Errorf(ctx, "failed to count active executions using JOIN for launch plan %s.%s.%s: %v", lpProject, lpDomain, lpName, err)
+		// We still proceed to log the count as 0 and potentially hit the concurrency limit if Max is 0.
+	}
+
+	logger.Debugf(ctx, "found %d active executions for launch plan %s.%s.%s (any version)", count, lpProject, lpDomain, lpName)
+
+	// Check against the policy limit
+	if count >= int64(launchPlan.GetSpec().GetConcurrencyPolicy().GetMax()) {
+		behavior := launchPlan.GetSpec().GetConcurrencyPolicy().GetBehavior()
+
+		switch behavior {
+		case admin.ConcurrencyLimitBehavior_CONCURRENCY_LIMIT_BEHAVIOR_SKIP:
+			metrics.ConcurrencyLimitHits.WithLabelValues(lpProject, lpDomain, lpName).Inc()
+			logger.Warningf(ctx, "skipping execution creation for launch plan %v due to concurrency limit", lpID)
+			return errors.NewFlyteAdminErrorf(
+				codes.AlreadyExists,
+				"concurrency limit (%d) reached for launch plan %s; skipping execution",
+				launchPlan.GetSpec().GetConcurrencyPolicy().GetMax(), lpName)
+
+		case admin.ConcurrencyLimitBehavior_CONCURRENCY_LIMIT_BEHAVIOR_UNSPECIFIED:
+			// fall through
+		default:
+			return fmt.Errorf("unsupported concurrency-limit behavior: %v", behavior)
+		}
+	}
+	return nil
 }
 
 func (m *ExecutionManager) CreateExecution(
@@ -1494,7 +1605,7 @@ func (m *ExecutionManager) CreateWorkflowEvent(ctx context.Context, request *adm
 		// Workflow executions are created in state "UNDEFINED". All the time up until a RUNNING event is received is
 		// considered system-induced delay.
 		if executionModel.Mode == int32(admin.ExecutionMetadata_SCHEDULED) {
-			go m.emitScheduledWorkflowMetrics(ctx, executionModel, request.GetEvent().GetOccurredAt())
+			go m.emitScheduledWorkflowMetrics(ctx, executionModel, request.GetEvent().GetOccurredAt()) //nolint:gosec
 		}
 	} else if common.IsExecutionTerminal(request.GetEvent().GetPhase()) {
 		if request.GetEvent().GetPhase() == core.WorkflowExecution_FAILED {
@@ -1509,7 +1620,7 @@ func (m *ExecutionManager) CreateWorkflowEvent(ctx context.Context, request *adm
 
 		m.systemMetrics.ActiveExecutions.Dec()
 		m.systemMetrics.ExecutionsTerminated.Inc(contextutils.WithPhase(ctx, request.GetEvent().GetPhase().String()))
-		go m.emitOverallWorkflowExecutionTime(executionModel, request.GetEvent().GetOccurredAt())
+		go m.emitOverallWorkflowExecutionTime(executionModel, request.GetEvent().GetOccurredAt()) //nolint:gosec
 		if request.GetEvent().GetOutputData() != nil {
 			m.userMetrics.WorkflowExecutionOutputBytes.Observe(float64(proto.Size(request.GetEvent().GetOutputData())))
 		}
@@ -1529,7 +1640,7 @@ func (m *ExecutionManager) CreateWorkflowEvent(ctx context.Context, request *adm
 		logger.Infof(ctx, "error publishing event [%+v] with err: [%v]", request.GetRequestId(), err)
 	}
 
-	go func() {
+	go func() { //nolint:gosec
 		ceCtx := context.TODO()
 		if err := m.cloudEventPublisher.Publish(ceCtx, proto.MessageName(request), request); err != nil {
 			m.systemMetrics.PublishEventError.Inc()
@@ -1874,6 +1985,10 @@ func newExecutionSystemMetrics(scope promutils.Scope) executionSystemMetrics {
 			"overall count of publish event errors when invoking publish()"),
 		TerminateExecutionFailures: scope.MustNewCounter("execution_termination_failure",
 			"count of failed workflow executions terminations"),
+		ConcurrencyCheckDuration: labeled.NewStopWatch("concurrency_check_duration",
+			"time spent checking concurrency limits for launch plans", time.Millisecond, scope),
+		ConcurrencyLimitHits: scope.MustNewCounterVec("concurrency_limit_hits",
+			"count of times concurrency limits were hit for launch plans", "project", "domain", "name"),
 	}
 }
 
@@ -1939,6 +2054,94 @@ func (m *ExecutionManager) addProjectLabels(ctx context.Context, projectName str
 		}
 	}
 	return initialLabels, nil
+}
+
+// addIdentityAnnotations automatically injects identity information (user or app) as annotations when enabled in config.
+// This allows tracking which identity submitted each workflow execution and enables identity-based authorization.
+func (m *ExecutionManager) addIdentityAnnotations(ctx context.Context, initialAnnotations map[string]string) map[string]string {
+	// Check if identity annotation injection is enabled
+	if !m.config.ApplicationConfiguration().GetTopLevelConfig().GetInjectIdentityAnnotations() {
+		return initialAnnotations
+	}
+
+	// Get identity from authentication context
+	identityContext := auth.IdentityContextFromContext(ctx)
+
+	// Check if identity context is empty
+	if identityContext.IsEmpty() {
+		logger.Debugf(ctx, "No identity information found in context, skipping identity annotation injection")
+		return initialAnnotations
+	}
+
+	if initialAnnotations == nil {
+		initialAnnotations = make(map[string]string)
+	}
+
+	prefix := m.config.ApplicationConfiguration().GetTopLevelConfig().GetIdentityAnnotationPrefix()
+	// Validate prefix format using DNS1123 subdomain validation
+	if errs := k8svalidation.IsDNS1123Subdomain(prefix); len(errs) > 0 {
+		logger.Warnf(ctx, "Invalid identity annotation prefix '%s': %v. Skipping identity annotation injection.", prefix, errs)
+		return initialAnnotations
+	}
+
+	keys := m.config.ApplicationConfiguration().GetTopLevelConfig().GetIdentityAnnotationKeys()
+
+	// Determine if this is an app or user identity
+	isAppIdentity := identityContext.AppID() != ""
+	isUserIdentity := identityContext.UserInfo() != nil && !isAppIdentity
+
+	// Add annotations based on identity type
+	if isAppIdentity {
+		// Handle app-based identity
+		appID := identityContext.AppID()
+		for _, key := range keys {
+			annotationKey := fmt.Sprintf("%s/app-%s", prefix, key)
+			if _, exists := initialAnnotations[annotationKey]; exists {
+				logger.Debugf(ctx, "Identity annotation key %s already exists, skipping injection", annotationKey)
+				continue
+			}
+			var value string
+			switch key {
+			case "email", "sub", "id":
+				// For app identities, use the app ID for these fields
+				value = appID
+			default:
+				// Skip unknown keys for app identities
+				logger.Debugf(ctx, "Unknown identity annotation key '%s' for app identity, skipping", key)
+				continue
+			}
+			if value != "" {
+				initialAnnotations[annotationKey] = value
+				logger.Debugf(ctx, "Injected app identity annotation %s=%s", annotationKey, value)
+			}
+		}
+	} else if isUserIdentity {
+		// Handle user-based identity
+		userInfo := identityContext.UserInfo()
+		for _, key := range keys {
+			annotationKey := fmt.Sprintf("%s/user-%s", prefix, key)
+			if _, exists := initialAnnotations[annotationKey]; exists {
+				logger.Debugf(ctx, "Identity annotation key %s already exists, skipping injection", annotationKey)
+				continue
+			}
+			var value string
+			switch key {
+			case "email":
+				value = userInfo.GetEmail()
+			case "sub":
+				value = userInfo.GetSubject()
+			default:
+				// Skip unknown keys
+				logger.Debugf(ctx, "Unknown identity annotation key '%s' for user identity, skipping", key)
+				continue
+			}
+			if value != "" {
+				initialAnnotations[annotationKey] = value
+				logger.Debugf(ctx, "Injected user identity annotation %s=%s", annotationKey, value)
+			}
+		}
+	}
+	return initialAnnotations
 }
 
 func addStateFilter(filters []common.InlineFilter) ([]common.InlineFilter, error) {

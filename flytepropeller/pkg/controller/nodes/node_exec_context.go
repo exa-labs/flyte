@@ -36,9 +36,6 @@ type eventRecorder struct {
 func (e eventRecorder) RecordTaskEvent(ctx context.Context, ev *event.TaskExecutionEvent, eventConfig *config.EventConfig) error {
 	if err := e.taskEventRecorder.RecordTaskEvent(ctx, ev, eventConfig); err != nil {
 		if eventsErr.IsAlreadyExists(err) {
-			if eventConfig.ErrorOnAlreadyExists {
-				return err
-			}
 			logger.Warningf(ctx, "Failed to record taskEvent, error [%s]. Trying to record state: %s. Ignoring this error!", err.Error(), ev.GetPhase())
 			return nil
 		} else if eventsErr.IsEventAlreadyInTerminalStateError(err) {
@@ -276,7 +273,7 @@ func (c *nodeExecutor) BuildNodeExecutionContext(ctx context.Context, executionC
 	}
 
 	workflowEnqueuer := func() error {
-		c.enqueueWorkflow(executionContext.GetID())
+		c.enqueueWorkflow(executionContext.GetK8sWorkflowID().String())
 		return nil
 	}
 

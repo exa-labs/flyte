@@ -16,7 +16,7 @@ flyteadmin:
   image:
     # -- Docker image for Flyteadmin deployment
     repository: cr.flyte.org/flyteorg/flyteadmin  # FLYTEADMIN_IMAGE
-    tag: v1.15.3  # FLYTEADMIN_TAG
+    tag: v1.16.8  # FLYTEADMIN_TAG
     pullPolicy: IfNotPresent
   # -- Additional flyteadmin container environment variables
   #
@@ -33,6 +33,16 @@ flyteadmin:
   env: []
   # -- Additional flyteadmin environment variables from a reference (ie: Secret or ConfigMap)
   envFrom: []
+  # -- Default readinessProbe and livenessProbe for Flyteadmin deployment
+  readinessProbe: |-
+    exec:
+      command: [ "sh", "-c", "reply=$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:8088/healthcheck); if [ \"$reply\" -lt 200 -o \"$reply\" -ge 400 ]; then exit 1; fi;","grpc_health_probe", "-addr=:8089"]
+    initialDelaySeconds: 15
+  livenessProbe: |-
+    exec:
+      command: [ "sh", "-c", "reply=$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:8088/healthcheck); if [ \"$reply\" -lt 200 -o \"$reply\" -ge 400 ]; then exit 1; fi;","grpc_health_probe", "-addr=:8089"]
+    initialDelaySeconds: 20
+    periodSeconds: 5
   # -- Default resources requests and limits for Flyteadmin deployment
   resources:
     limits:
@@ -43,6 +53,27 @@ flyteadmin:
       cpu: 10m
       ephemeral-storage: 50Mi
       memory: 50Mi
+  # Strategy for Flyteadmin deployment
+  strategy: {}
+
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 80
+      - type: Resource
+        resource:
+          name: memory
+          target:
+            type: Utilization
+            averageUtilization: 80
+
   # -- Default regex string for searching configuration files
   configPath: /etc/flyte/config/*.yaml
   # -- Initial projects to create
@@ -54,8 +85,7 @@ flyteadmin:
   service:
     appProtocols:
       enabled: false
-    annotations:
-      projectcontour.io/upstream-protocol.h2c: grpc
+    annotations: {}
     type: ClusterIP
     loadBalancerSourceRanges: []
     # -- Appends additional ports to the service spec.
@@ -71,14 +101,23 @@ flyteadmin:
     # -- ImagePullSecrets to automatically assign to the service account
     imagePullSecrets: []
     # -- Should a ClusterRole be created for Flyteadmin
-    createClusterRole: true
+    # (DEPRECATED) Use `rbac: true` instead
+    createClusterRole:
+    # -- Should create RBAC resources for FlynAdmin (Role/RoleBinding or ClusterRole/ClusterRoleBinding)
+    rbac: true
+    # -- What scope are the RBAC resources created for - cluster, or namespace?
+    # Valid values are `cluster` and `namespace`
+    rbacScope: cluster
     # -- Configuration for ClusterRole created for Flyteadmin
+    # (DEPRECATED) Use `rbacRules` instead
     clusterRole:
+    # -- Configuration for ClusterRole created for Flyteadmin
+    rbacRules:
       # -- Specifies the API groups that this ClusterRole can access
       apiGroups:
         - ""
-        - "flyte.lyft.com"
-        - "rbac.authorization.k8s.io"
+        - flyte.lyft.com
+        - rbac.authorization.k8s.io
       # -- Specifies the resources that this ClusterRole can access
       resources:
         - configmaps
@@ -96,6 +135,8 @@ flyteadmin:
       # -- Specifies the verbs (actions) that this ClusterRole can perform on the specified resources
       verbs:
         - "*"
+  # -- Annotations for Flyteadmin deployment
+  annotations: {}
   # -- Annotations for Flyteadmin pods
   podAnnotations: {}
   # -- Labels for Flyteadmin pods
@@ -148,7 +189,7 @@ flytescheduler:
     # -- Docker image for Flytescheduler deployment
     repository: cr.flyte.org/flyteorg/flytescheduler  # FLYTESCHEDULER_IMAGE
     # -- Docker image tag
-    tag: v1.15.3  # FLYTESCHEDULER_TAG
+    tag: v1.16.8  # FLYTESCHEDULER_TAG
     # -- Docker image pull policy
     pullPolicy: IfNotPresent
   # -- Default resources requests and limits for Flytescheduler deployment
@@ -161,6 +202,8 @@ flytescheduler:
       cpu: 10m
       ephemeral-storage: 50Mi
       memory: 50Mi
+  # Strategy for Flytescheduler deployment
+  strategy: {}
   # -- Default regex string for searching configuration files
   configPath: /etc/flyte/config/*.yaml
 
@@ -172,6 +215,8 @@ flytescheduler:
     annotations: {}
     # -- ImagePullSecrets to automatically assign to the service account
     imagePullSecrets: []
+  # -- Annotations for Flytescheduler deployment
+  annotations: {}
   # -- Annotations for Flytescheduler pods
   podAnnotations: {}
   # -- Additional Flytescheduler container environment variables
@@ -202,6 +247,24 @@ flytescheduler:
     seLinuxOptions:
       type: spc_t
 
+  # -- Settings for flytescheduler service
+  service:
+    # -- If enabled create the flytescheduler service
+    enabled: false
+    type: ClusterIP
+
+  # -- Settings for flytescheduler service monitor
+  serviceMonitor:
+    # -- If enabled create the flytescheduler service monitor
+    enabled: false
+    # -- Sets the labels for the service monitor which are required by the
+    # prometheus to auto-detect the service monitor and start scraping the metrics
+    labels: {}
+    # -- Sets the interval at which metrics will be scraped by prometheus
+    interval: 60s
+    # -- Sets the timeout after which request to scrape metrics will time out
+    scrapeTimeout: 30s
+
 #
 # DATACATALOG SETTINGS
 #
@@ -214,7 +277,7 @@ datacatalog:
     # -- Docker image for Datacatalog deployment
     repository: cr.flyte.org/flyteorg/datacatalog  # DATACATALOG_IMAGE
     # -- Docker image tag
-    tag: v1.15.3  # DATACATALOG_TAG
+    tag: v1.16.8  # DATACATALOG_TAG
     # -- Docker image pull policy
     pullPolicy: IfNotPresent
   # -- Default resources requests and limits for Datacatalog deployment
@@ -227,15 +290,44 @@ datacatalog:
       cpu: 10m
       ephemeral-storage: 50Mi
       memory: 50Mi
+  # Strategy for Datacatalog deployment
+  strategy: {}
+
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 80
+      - type: Resource
+        resource:
+          name: memory
+          target:
+            type: Utilization
+            averageUtilization: 80
   # -- Default regex string for searching configuration files
   configPath: /etc/datacatalog/config/*.yaml
   # -- Service settings for Datacatalog
   service:
-    annotations:
-      projectcontour.io/upstream-protocol.h2c: grpc
+    annotations: {}
     type: NodePort
     # -- Appends additional ports to the service spec.
     additionalPorts: []
+  serviceMonitor:
+    # -- If enabled create the Datacatalog service monitor
+    enabled: false
+    # -- Sets the labels for the service monitor which are required by the
+    # prometheus to auto-detect the service monitor and start scraping the metrics
+    labels: {}
+    # -- Sets the interval at which metrics will be scraped by prometheus
+    interval: 60s
+    # -- Sets the timeout after which request to scrape metrics will time out
+    scrapeTimeout: 30s
   # -- Configuration for service accounts for Datacatalog
   serviceAccount:
     # -- Should a service account be created for Datacatalog
@@ -244,6 +336,8 @@ datacatalog:
     annotations: {}
     # -- ImagePullSecrets to automatically assign to the service account
     imagePullSecrets: []
+  # -- Annotations for Datacatalog deployment
+  annotations: {}
   # -- Annotations for Datacatalog pods
   podAnnotations: {}
   # -- Additional Datacatalog container environment variables
@@ -311,7 +405,7 @@ flytepropeller:
   image:
     # -- Docker image for Flytepropeller deployment
     repository: cr.flyte.org/flyteorg/flytepropeller  # FLYTEPROPELLER_IMAGE
-    tag: v1.15.3  # FLYTEPROPELLER_TAG
+    tag: v1.16.8  # FLYTEPROPELLER_TAG
     pullPolicy: IfNotPresent
   # -- Default resources requests and limits for Flytepropeller deployment
   resources:
@@ -323,6 +417,8 @@ flytepropeller:
       cpu: 10m
       ephemeral-storage: 50Mi
       memory: 100Mi
+  # Strategy for Flytepropeller deployment
+  strategy: {}
   # -- If manager is set to true this can be used to give the flytepropeller-manager different resource requests than the sharded flyte propeller pods
   manager_resources:
     resources:
@@ -347,6 +443,74 @@ flytepropeller:
     annotations: {}
     # -- ImagePullSecrets to automatically assign to the service account
     imagePullSecrets: []
+    # -- What scope are the RBAC resources created for - cluster, or namespace?
+    # Valid values are `cluster` and `namespace`
+    rbacScope: cluster
+    # -- Configuration for ClusterRole created for Flyteadmin
+    rbacRules:
+      # Allow RO access to PODS
+      - apiGroups:
+          - ""
+        resources:
+          - pods
+        verbs:
+          - get
+          - list
+          - watch
+      # Allow Event recording access
+      - apiGroups:
+          - ""
+        resources:
+          - events
+        verbs:
+          - create
+          - update
+          - delete
+          - patch
+      # Allow Access All plugin objects
+      - apiGroups:
+          - '*'
+        resources:
+          - '*'
+        verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - delete
+          - patch
+      # Allow Access to CRD
+      - apiGroups:
+          - apiextensions.k8s.io
+        resources:
+          - customresourcedefinitions
+        verbs:
+          - get
+          - list
+          - watch
+          - create
+          - delete
+          - update
+      # Allow Access to all resources under flyte.lyft.com
+      - apiGroups:
+          - flyte.lyft.com
+        resources:
+          - flyteworkflows
+          - flyteworkflows/finalizers
+        verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - delete
+          - patch
+          - post
+          - deletecollection
+
+  # -- Annotations for Flytepropeller deployment
+  annotations: {}
   # -- Annotations for Flytepropeller pods
   podAnnotations: {}
   # -- Additional Flytepropeller container environment variables
@@ -409,8 +573,8 @@ flyteconsole:
   replicaCount: 1
   image:
     # -- Docker image for Flyteconsole deployment
-    repository: 472386928882.dkr.ecr.us-west-2.amazonaws.com/exa-labs/flyteconsole  # FLYTECONSOLE_IMAGE
-    tag: latest  # FLYTECONSOLE_TAG
+    repository: cr.flyte.org/flyteorg/flyteconsole  # FLYTECONSOLE_IMAGE
+    tag: v1.21.0  # FLYTECONSOLE_TAG
     pullPolicy: IfNotPresent
   # -- Default resources requests and limits for Flyteconsole deployment
   resources:
@@ -420,12 +584,34 @@ flyteconsole:
     requests:
       cpu: 10m
       memory: 50Mi
+  # Strategy for Flyteconsole deployment
+  strategy: {}
+
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 80
+      - type: Resource
+        resource:
+          name: memory
+          target:
+            type: Utilization
+            averageUtilization: 80
   # -- Service settings for Flyteconsole
   service:
     appProtocols:
       enabled: false
     annotations: {}
     type: ClusterIP
+  # -- Annotations for Flyteconsole deployment
+  annotations: {}
   # -- Annotations for Flyteconsole pods
   podAnnotations: {}
   # -- Additional Flyteconsole container environment variables
@@ -506,17 +692,40 @@ webhook:
     annotations: {}
     # -- ImagePullSecrets to automatically assign to the service account
     imagePullSecrets: []
+    # -- What scope are the RBAC resources created for - cluster, or namespace?
+    # Valid values are `cluster` and `namespace`
+    rbacScope: cluster
+    # -- Configuration for ClusterRole created for Flyteadmin
+    rbacRules:
+      # Allow RO access to PODS
+      - apiGroups:
+          - "*"
+        resources:
+          - mutatingwebhookconfigurations
+          - secrets
+          - pods
+          - replicasets/finalizers
+        verbs:
+          - get
+          - create
+          - update
+          - patch
   # -- Service settings for the webhook
   service:
-    annotations:
-      projectcontour.io/upstream-protocol.h2c: grpc
+    annotations: {}
     type: ClusterIP
+  # -- Annotations for webhook deployment
+  annotations: {}
   # -- Annotations for webhook pods
   podAnnotations: {}
   # -- Additional webhook container environment variables
   podEnv: {}
   # -- Labels for webhook pods
   podLabels: {}
+  # -- Affinity for webhook deployment
+  affinity: {}
+  # -- TopologySpreadConstraints for webhook deployment
+  topologySpreadConstraints: {}
   # -- nodeSelector for webhook deployment
   nodeSelector: {}
   # -- Sets securityContext for webhook pod(s).
@@ -533,6 +742,9 @@ webhook:
       cpu: 200m
       ephemeral-storage: 500Mi
       memory: 500Mi
+
+  # Strategy for webhook deployment
+  strategy: {}
 
   autoscaling:
     enabled: false
@@ -603,6 +815,8 @@ common:
 #
 
 storage:
+  # -- Optionally load the storage configuration from a secret so that sensitive values aren't declared in the values file.
+  secretName: ""
   # -- Sets the storage type. Supported values are sandbox, s3, gcs and custom.
   type: sandbox
   # -- bucketName defines the storage bucket flyte will use. Required for all types except for sandbox.
@@ -641,12 +855,18 @@ db:
       username: postgres
       host: postgres
       dbname: "datacatalog"
+      # If using common.databaseSecret, this parameter is required.
+      # Ensure the secret key matches the specified filename below:
+      # E.g. `kubectl create secret generic flyte-db-password --from-literal=pass.txt='xxx'`
+      # passwordPath: /etc/db/pass.txt
   admin:
     database:
       port: 5432
       username: postgres
       host: postgres
       dbname: "flyteadmin"
+      # See comment above about passwordPath usage
+      # passwordPath: /etc/db/pass.txt
 # --------------------------------------------------------------------
 # Specializing your deployment using configuration
 # -------------------------------------------------------------------
@@ -704,6 +924,29 @@ configmap:
       - id: production
         name: production
 
+  # -- Open Telemetry Configuration
+  otel:
+    otel:
+      # -- The type of exporter to use
+      type: noop
+      # -- Configuration for the file exporter type
+      file:
+        filename: "/tmp/trace.txt"
+      # -- Configuration for the jaeger exporter type
+      jaeger:
+        endpoint: "http://localhost:14268/api/traces"
+        # -- Configuration for the otlpgrpc exporter type
+      otlpgrpc:
+        endpoint: "http://localhost:4317"
+      # -- Configuration for the otlp exporter type
+      otlphttp:
+        endpoint: "http://localhost:4318/v1/traces"
+      # -- Configuration for sampling of traces
+      sampler:
+        # -- Configuration for the parent based sampler
+        parentSampler: always
+
+
   # Refer to the full [structure](https://pkg.go.dev/github.com/lyft/flyteadmin@v0.3.37/pkg/runtime/interfaces#ApplicationConfig) for documentation.
   schedulerConfig:
     scheduler:
@@ -738,6 +981,11 @@ configmap:
         - "metadata"
         - "admin"
       eventVersion: 2
+      injectIdentityAnnotations: false
+      identityAnnotationPrefix: "flyte.org"
+      identityAnnotationKeys:
+        - email
+        - sub
       testing:
         host: http://flyteadmin
 
@@ -773,7 +1021,7 @@ configmap:
   datacatalogServer:
     datacatalog:
       storage-prefix: metadata/datacatalog
-      metrics-scope: datacatalog
+      metrics-scope: flyte
       profiler-port: 10254
       heartbeat-grace-period-multiplier: 3
       max-reservation-heartbeat: 30s
@@ -822,7 +1070,7 @@ configmap:
         # -- Structure documented [here](https://pkg.go.dev/github.com/lyft/flyteplugins@v0.5.28/go/tasks/pluginmachinery/flytek8s/config#FlyteCoPilotConfig)
         co-pilot:
           name: flyte-copilot-
-          image: cr.flyte.org/flyteorg/flytecopilot:v1.15.3  # FLYTECOPILOT_IMAGE
+          image: cr.flyte.org/flyteorg/flytecopilot:v1.16.8  # FLYTECOPILOT_IMAGE
           start-timeout: 30s
 
   # -- Core propeller configuration
@@ -834,7 +1082,7 @@ configmap:
       pod-template-name: "flytepropeller-template"
     # -- follows the structure specified [here](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/config).
     propeller:
-      rawoutput-prefix: s3://my-s3-bucket/
+      rawoutput-prefix: "s3://{{ .Values.storage.bucketName }}/"
       metadata-prefix: metadata/propeller
       workers: 4
       max-workflow-retries: 30
@@ -1020,6 +1268,8 @@ cluster_resource_manager:
   standaloneDeployment: false
   # -- Service account name to run with
   service_account_name: flyteadmin
+  # -- Annotations for ClusterResource deployment
+  annotations: {}
   # -- Annotations for ClusterResource pods
   podAnnotations: {}
   # -- Additional ClusterResource container environment variables
@@ -1030,6 +1280,8 @@ cluster_resource_manager:
   nodeSelector: {}
   # -- Resources for ClusterResource deployment
   resources: {}
+  # Strategy for ClusterResource deployment
+  strategy: {}
   # -- Configmap for ClusterResource parameters
   config:
     # -- ClusterResource parameters
@@ -1059,7 +1311,6 @@ cluster_resource_manager:
 
   prometheus:
     enabled: false
-    path: "/metrics"
     port: 10254
 
   # -- Resource templates that should be applied

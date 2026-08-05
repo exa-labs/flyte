@@ -1421,6 +1421,16 @@ pub struct TaskMetadata {
     /// - false: The task will not generate a deck.
     #[prost(message, optional, tag="15")]
     pub generates_deck: ::core::option::Option<bool>,
+    /// Metadata applied to task pods or task CR objects.
+    /// In flytekit, labels and annotations resulting in this metadata field
+    /// are provided via `@task(labels=..., annotations=...)`.
+    /// For tasks backed by pods like PythonFunctionTask, these take precedence
+    /// over the metadata provided via `@task(pod_template=PodTemplate(labels=...))` which are transported
+    /// in the K8sPod message. For tasks backed by CRDs, this metadata is applied to
+    /// the CR object itself while the metadata in the pod template/K8sPod is applied
+    /// to the pod template spec of the CR object.
+    #[prost(message, optional, tag="16")]
+    pub metadata: ::core::option::Option<K8sObjectMetadata>,
     // For interruptible we will populate it at the node level but require it be part of TaskMetadata
     // for a user to set the value.
     // We are using oneof instead of bool because otherwise we would be unable to distinguish between value being
@@ -2121,6 +2131,7 @@ pub mod task_execution {
         Initializing = 6,
         /// To address cases, where underlying resource is not available: Backoff error, Resource quota exceeded
         WaitingForResources = 7,
+        RetryableFailed = 8,
     }
     impl Phase {
         /// String value of the enum field names used in the ProtoBuf definition.
@@ -2137,6 +2148,7 @@ pub mod task_execution {
                 Phase::Failed => "FAILED",
                 Phase::Initializing => "INITIALIZING",
                 Phase::WaitingForResources => "WAITING_FOR_RESOURCES",
+                Phase::RetryableFailed => "RETRYABLE_FAILED",
             }
         }
         /// Creates an enum from field names used in the ProtoBuf definition.
@@ -2150,6 +2162,7 @@ pub mod task_execution {
                 "FAILED" => Some(Self::Failed),
                 "INITIALIZING" => Some(Self::Initializing),
                 "WAITING_FOR_RESOURCES" => Some(Self::WaitingForResources),
+                "RETRYABLE_FAILED" => Some(Self::RetryableFailed),
                 _ => None,
             }
         }
@@ -2259,6 +2272,51 @@ pub mod task_log {
                 _ => None,
             }
         }
+    }
+}
+/// Contains metadata required to identify logs produces by a set of pods
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LogContext {
+    #[prost(message, repeated, tag="1")]
+    pub pods: ::prost::alloc::vec::Vec<PodLogContext>,
+    #[prost(string, tag="2")]
+    pub primary_pod_name: ::prost::alloc::string::String,
+}
+/// Contains metadata required to identify logs produces by a single pod
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PodLogContext {
+    #[prost(string, tag="1")]
+    pub namespace: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub pod_name: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="3")]
+    pub containers: ::prost::alloc::vec::Vec<ContainerContext>,
+    #[prost(string, tag="4")]
+    pub primary_container_name: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="5")]
+    pub init_containers: ::prost::alloc::vec::Vec<ContainerContext>,
+}
+/// Contains metadata required to identify logs produces by a single container
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ContainerContext {
+    #[prost(string, tag="1")]
+    pub container_name: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="2")]
+    pub process: ::core::option::Option<container_context::ProcessContext>,
+}
+/// Nested message and enum types in `ContainerContext`.
+pub mod container_context {
+    /// Contains metadata required to identify logs produces by a single light-weight process that was run inside a container
+    #[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+    pub struct ProcessContext {
+        #[prost(message, optional, tag="1")]
+        pub container_start_time: ::core::option::Option<::prost_types::Timestamp>,
+        #[prost(message, optional, tag="2")]
+        pub container_end_time: ::core::option::Option<::prost_types::Timestamp>,
     }
 }
 /// Represents customized execution run-time attributes.
@@ -2482,6 +2540,12 @@ pub struct ArrayNode {
     /// +optional. Specifies input bindings that are not mapped over for the node.
     #[prost(string, repeated, tag="8")]
     pub bound_inputs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// +optional. If set to true, the ArrayNode will continue to run all sub-nodes even after the
+    /// failure threshold has been met (i.e. it is no longer possible to meet min_successes or
+    /// min_success_ratio). This is useful when you want to ensure all sub-nodes complete execution
+    /// even if the overall array node will fail.
+    #[prost(bool, tag="9")]
+    pub run_all_sub_nodes: bool,
     #[prost(oneof="array_node::ParallelismOption", tags="2")]
     pub parallelism_option: ::core::option::Option<array_node::ParallelismOption>,
     #[prost(oneof="array_node::SuccessCriteria", tags="3, 4")]

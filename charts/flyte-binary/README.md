@@ -1,6 +1,6 @@
 # flyte-binary
 
-![Version: v0.1.10](https://img.shields.io/badge/Version-v0.1.10-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.16.0](https://img.shields.io/badge/AppVersion-1.16.0-informational?style=flat-square)
+![Version: v0.1.11](https://img.shields.io/badge/Version-v0.1.11-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.16.0](https://img.shields.io/badge/AppVersion-1.16.0-informational?style=flat-square)
 
 Chart for basic single Flyte executable deployment
 
@@ -40,7 +40,7 @@ Chart for basic single Flyte executable deployment
 | configuration.auth.oidc.clientSecret | string | `""` |  |
 | configuration.auth.refreshTokenLifespan | string | `"60m"` |  |
 | configuration.co-pilot.image.repository | string | `"cr.flyte.org/flyteorg/flytecopilot"` |  |
-| configuration.co-pilot.image.tag | string | `"v1.15.3"` |  |
+| configuration.co-pilot.image.tag | string | `"v1.16.8"` |  |
 | configuration.connectorService.defaultConnector.defaultTimeout | string | `"10s"` |  |
 | configuration.connectorService.defaultConnector.endpoint | string | `"k8s://flyteconnector.flyte:8000"` |  |
 | configuration.connectorService.defaultConnector.insecure | bool | `true` |  |
@@ -133,6 +133,19 @@ Chart for basic single Flyte executable deployment
 | flyte-core-components.propeller.disabled | bool | `false` |  |
 | flyteconnector.enabled | bool | `false` |  |
 | fullnameOverride | string | `""` |  |
+| ha.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].podAffinityTerm.labelSelector.matchLabels."app.kubernetes.io/name" | string | `"flyte-binary"` |  |
+| ha.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].podAffinityTerm.topologyKey | string | `"kubernetes.io/hostname"` |  |
+| ha.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].weight | int | `100` |  |
+| ha.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[1].podAffinityTerm.labelSelector.matchLabels."app.kubernetes.io/name" | string | `"flyte-binary"` |  |
+| ha.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[1].podAffinityTerm.topologyKey | string | `"topology.kubernetes.io/zone"` |  |
+| ha.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[1].weight | int | `100` |  |
+| ha.enabled | bool | `false` |  |
+| ha.leaderElection.enabled | bool | `false` |  |
+| ha.leaderElection.leaseDuration | string | `"15s"` |  |
+| ha.leaderElection.lockName | string | `"propeller-leader"` |  |
+| ha.leaderElection.lockNamespace | string | `"flyte"` |  |
+| ha.leaderElection.renewDeadline | string | `"10s"` |  |
+| ha.leaderElection.retryPeriod | string | `"2s"` |  |
 | ingress.commonAnnotations | object | `{}` |  |
 | ingress.create | bool | `false` |  |
 | ingress.grpcAnnotations | object | `{}` |  |
@@ -155,6 +168,7 @@ Chart for basic single Flyte executable deployment
 | rbac.create | bool | `true` |  |
 | rbac.extraRules | list | `[]` |  |
 | rbac.labels | object | `{}` |  |
+| replicaCount | int | `1` |  |
 | service.clusterIP | string | `""` |  |
 | service.commonAnnotations | object | `{}` |  |
 | service.externalTrafficPolicy | string | `"Cluster"` |  |
@@ -174,4 +188,7 @@ Chart for basic single Flyte executable deployment
 | serviceAccount.imagePullSecrets | list | `[]` |  |
 | serviceAccount.labels | object | `{}` |  |
 | serviceAccount.name | string | `""` |  |
+| strategy.rollingUpdate.maxSurge | int | `1` |  |
+| strategy.rollingUpdate.maxUnavailable | int | `0` |  |
+| strategy.type | string | `"Recreate"` |  |
 

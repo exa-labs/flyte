@@ -55,7 +55,7 @@ const webhookName = "flyte-pod-webhook.flyte.org"
 
 // PodMutator implements controller-runtime WebHook interface.
 type PodMutator struct {
-	decoder  *admission.Decoder
+	decoder  admission.Decoder
 	cfg      *config.Config
 	Mutators []MutatorConfig
 }
@@ -199,6 +199,7 @@ func (pm PodMutator) CreateMutationWebhookConfiguration(namespace string) (*admi
 					"v1",
 					"v1beta1",
 				},
+				NamespaceSelector: pm.cfg.NamespaceSelector,
 				ObjectSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
 						secrets.PodLabel: secrets.PodLabelValue,

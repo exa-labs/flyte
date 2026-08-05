@@ -8,6 +8,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"google.golang.org/grpc/codes"
 
 	"github.com/flyteorg/flyte/flyteadmin/pkg/common"
@@ -33,9 +34,11 @@ const nameValue = "baz"
 const limit = 100
 
 func getMockConfigForTaskTest() runtimeInterfaces.Configuration {
+	whitelistConfiguration := &runtimeMocks.WhitelistConfiguration{}
+	whitelistConfiguration.EXPECT().GetTaskTypeWhitelist().Return(map[string][]runtimeInterfaces.WhitelistScope{})
 	mockConfig := runtimeMocks.NewMockConfigurationProvider(
 		testutils.GetApplicationConfigWithDefaultDomains(), nil, nil, runtimeMocks.NewMockTaskResourceConfiguration(
-			runtimeInterfaces.TaskResourceSet{}, runtimeInterfaces.TaskResourceSet{}), runtimeMocks.NewMockWhitelistConfiguration(), nil)
+			runtimeInterfaces.TaskResourceSet{}, runtimeInterfaces.TaskResourceSet{}), whitelistConfiguration, nil)
 	return mockConfig
 }
 
@@ -80,10 +83,10 @@ func TestCreateTask(t *testing.T) {
 		createCalled = true
 		return nil
 	})
-	mockRepository.DescriptionEntityRepo().(*repositoryMocks.MockDescriptionEntityRepo).SetGetCallback(
-		func(input interfaces.GetDescriptionEntityInput) (models.DescriptionEntity, error) {
-			return models.DescriptionEntity{}, adminErrors.NewFlyteAdminErrorf(codes.NotFound, "NotFound")
-		})
+	descriptionEntityRepo := mockRepository.DescriptionEntityRepo().(*repositoryMocks.DescriptionEntityRepoInterface)
+	descriptionEntityRepo.EXPECT().
+		Get(mock.Anything, mock.Anything).
+		Return(models.DescriptionEntity{}, adminErrors.NewFlyteAdminErrorf(codes.NotFound, "NotFound"))
 	taskManager := NewTaskManager(mockRepository, getMockConfigForTaskTest(), getMockTaskCompiler(),
 		mockScope.NewTestScope())
 	request := testutils.GetValidTaskRequest()

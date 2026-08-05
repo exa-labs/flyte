@@ -15,7 +15,6 @@ import (
 	"github.com/flyteorg/flyte/flyteidl/gen/pb-go/flyteidl/event"
 	"github.com/flyteorg/flyte/flyteplugins/go/tasks/pluginmachinery/core"
 	pluginiomocks "github.com/flyteorg/flyte/flyteplugins/go/tasks/pluginmachinery/io/mocks"
-	eventsErr "github.com/flyteorg/flyte/flytepropeller/events/errors"
 	eventmocks "github.com/flyteorg/flyte/flytepropeller/events/mocks"
 	"github.com/flyteorg/flyte/flytepropeller/pkg/apis/flyteworkflow/v1alpha1"
 	"github.com/flyteorg/flyte/flytepropeller/pkg/controller/config"
@@ -48,13 +47,14 @@ var (
 		},
 	}
 	workflowMaxParallelism = uint32(10)
+	testError              = &idlcore.ExecutionError{Message: "test error"}
 )
 
 func createArrayNodeHandler(ctx context.Context, t *testing.T, nodeHandler interfaces.NodeHandler, dataStore *storage.DataStore, scope promutils.Scope) (interfaces.NodeHandler, error) {
 	// mock components
 	adminClient := launchplan.NewFailFastLaunchPlanExecutor()
 	enqueueWorkflowFunc := func(workflowID v1alpha1.WorkflowID) {}
-	eventConfig := &config.EventConfig{ErrorOnAlreadyExists: true}
+	eventConfig := &config.EventConfig{}
 	offloadingConfig := config.LiteralOffloadingConfig{Enabled: false}
 	literalOffloadingConfig := config.LiteralOffloadingConfig{Enabled: true, MinSizeInMBForOffloading: 1024, MaxSizeInMBForOffloading: 1024 * 1024}
 	mockEventSink := eventmocks.NewMockEventSink()
@@ -208,9 +208,12 @@ func TestAbort(t *testing.T) {
 		inputMap                       map[string][]int64
 		subNodePhases                  []v1alpha1.NodePhase
 		subNodeTaskPhases              []core.Phase
+		expectedAbortCalls             int
 		expectedExternalResourcePhases []idlcore.TaskExecution_Phase
-		arrayNodeState                 v1alpha1.ArrayNodePhase
+		arrayNodeStatePhase            v1alpha1.ArrayNodePhase
+		arrayNodeStateError            *idlcore.ExecutionError
 		expectedTaskExecutionPhase     idlcore.TaskExecution_Phase
+		expectTaskExecutionError       bool
 	}{
 		{
 			name: "Aborted after failed",
@@ -219,9 +222,12 @@ func TestAbort(t *testing.T) {
 			},
 			subNodePhases:                  []v1alpha1.NodePhase{v1alpha1.NodePhaseSucceeded, v1alpha1.NodePhaseRunning, v1alpha1.NodePhaseNotYetStarted},
 			subNodeTaskPhases:              []core.Phase{core.PhaseSuccess, core.PhaseRunning, core.PhaseUndefined},
-			expectedExternalResourcePhases: []idlcore.TaskExecution_Phase{idlcore.TaskExecution_ABORTED},
-			arrayNodeState:                 v1alpha1.ArrayNodePhaseFailing,
+			expectedExternalResourcePhases: []idlcore.TaskExecution_Phase{idlcore.TaskExecution_SUCCEEDED, idlcore.TaskExecution_ABORTED, idlcore.TaskExecution_UNDEFINED},
+			expectedAbortCalls:             1,
+			arrayNodeStatePhase:            v1alpha1.ArrayNodePhaseFailing,
+			arrayNodeStateError:            testError,
 			expectedTaskExecutionPhase:     idlcore.TaskExecution_FAILED,
+			expectTaskExecutionError:       true,
 		},
 		{
 			name: "Aborted while running",
@@ -230,8 +236,10 @@ func TestAbort(t *testing.T) {
 			},
 			subNodePhases:                  []v1alpha1.NodePhase{v1alpha1.NodePhaseSucceeded, v1alpha1.NodePhaseRunning, v1alpha1.NodePhaseNotYetStarted},
 			subNodeTaskPhases:              []core.Phase{core.PhaseSuccess, core.PhaseRunning, core.PhaseUndefined},
-			expectedExternalResourcePhases: []idlcore.TaskExecution_Phase{idlcore.TaskExecution_ABORTED},
-			arrayNodeState:                 v1alpha1.ArrayNodePhaseExecuting,
+			expectedExternalResourcePhases: []idlcore.TaskExecution_Phase{idlcore.TaskExecution_SUCCEEDED, idlcore.TaskExecution_ABORTED, idlcore.TaskExecution_UNDEFINED},
+			expectedAbortCalls:             1,
+			arrayNodeStatePhase:            v1alpha1.ArrayNodePhaseExecuting,
+			arrayNodeStateError:            testError,
 			expectedTaskExecutionPhase:     idlcore.TaskExecution_ABORTED,
 		},
 	}
@@ -266,7 +274,8 @@ func TestAbort(t *testing.T) {
 
 			// initialize ArrayNodeState
 			arrayNodeState := &handler.ArrayNodeState{
-				Phase: test.arrayNodeState,
+				Phase: test.arrayNodeStatePhase,
+				Error: test.arrayNodeStateError,
 			}
 			for _, item := range []struct {
 				arrayReference *bitarray.CompactArray
@@ -298,10 +307,16 @@ func TestAbort(t *testing.T) {
 			err = arrayNodeHandler.Abort(ctx, nCtx, "foo")
 			assert.NoError(t, err)
 
-			nodeHandler.AssertNumberOfCalls(t, "Abort", len(test.expectedExternalResourcePhases))
+			nodeHandler.AssertNumberOfCalls(t, "Abort", test.expectedAbortCalls)
 			if len(test.expectedExternalResourcePhases) > 0 {
 				assert.Equal(t, 1, len(eventRecorder.taskExecutionEvents))
 				assert.Equal(t, test.expectedTaskExecutionPhase, eventRecorder.taskExecutionEvents[0].GetPhase())
+
+				if test.expectTaskExecutionError {
+					assert.Equal(t, testError.GetMessage(), eventRecorder.taskExecutionEvents[0].GetError().GetMessage())
+				} else {
+					assert.Nil(t, eventRecorder.taskExecutionEvents[0].GetError())
+				}
 
 				externalResources := eventRecorder.taskExecutionEvents[0].GetMetadata().GetExternalResources()
 				assert.Equal(t, len(test.expectedExternalResourcePhases), len(externalResources))
@@ -822,61 +837,6 @@ func TestHandleArrayNodePhaseExecuting(t *testing.T) {
 			expectedExternalResourcePhases: []idlcore.TaskExecution_Phase{idlcore.TaskExecution_FAILED, idlcore.TaskExecution_SUCCEEDED},
 		},
 		{
-			name:        "EventingAlreadyExists_EventuallySucceeds",
-			parallelism: uint32Ptr(0),
-			subNodePhases: []v1alpha1.NodePhase{
-				v1alpha1.NodePhaseQueued,
-				v1alpha1.NodePhaseQueued,
-			},
-			subNodeTaskPhases: []core.Phase{
-				core.PhaseRunning,
-				core.PhaseRunning,
-			},
-			subNodeTransitions: []handler.Transition{
-				handler.DoTransition(handler.TransitionTypeEphemeral, handler.PhaseInfoRunning(&handler.ExecutionInfo{})),
-				handler.DoTransition(handler.TransitionTypeEphemeral, handler.PhaseInfoRunning(&handler.ExecutionInfo{})),
-			},
-			expectedArrayNodePhase: v1alpha1.ArrayNodePhaseExecuting,
-			expectedArrayNodeSubPhases: []v1alpha1.NodePhase{
-				v1alpha1.NodePhaseRunning,
-				v1alpha1.NodePhaseRunning,
-			},
-			expectedTaskPhaseVersion:       2,
-			expectedTransitionPhase:        handler.EPhaseRunning,
-			expectedExternalResourcePhases: []idlcore.TaskExecution_Phase{idlcore.TaskExecution_RUNNING, idlcore.TaskExecution_RUNNING},
-			useFakeEventRecorder:           true,
-			eventRecorderFailures:          2,
-			eventRecorderError:             &eventsErr.EventError{Code: eventsErr.AlreadyExists, Cause: fmt.Errorf("err")},
-			incrementParallelismCount:      1,
-			expectedEventingCalls:          2,
-		},
-		{
-			name:        "EventingAlreadyExists_EventuallyFails",
-			parallelism: uint32Ptr(0),
-			subNodePhases: []v1alpha1.NodePhase{
-				v1alpha1.NodePhaseQueued,
-				v1alpha1.NodePhaseQueued,
-			},
-			subNodeTaskPhases: []core.Phase{
-				core.PhaseRunning,
-				core.PhaseRunning,
-			},
-			subNodeTransitions: []handler.Transition{
-				handler.DoTransition(handler.TransitionTypeEphemeral, handler.PhaseInfoRunning(&handler.ExecutionInfo{})),
-				handler.DoTransition(handler.TransitionTypeEphemeral, handler.PhaseInfoRunning(&handler.ExecutionInfo{})),
-			},
-			expectedArrayNodeSubPhases: []v1alpha1.NodePhase{
-				v1alpha1.NodePhaseQueued,
-				v1alpha1.NodePhaseQueued,
-			},
-			expectedExternalResourcePhases: []idlcore.TaskExecution_Phase{idlcore.TaskExecution_RUNNING, idlcore.TaskExecution_RUNNING},
-			useFakeEventRecorder:           true,
-			eventRecorderFailures:          5,
-			eventRecorderError:             &eventsErr.EventError{Code: eventsErr.AlreadyExists, Cause: fmt.Errorf("err")},
-			expectHandleError:              true,
-			expectedEventingCalls:          4,
-		},
-		{
 			name:        "EventingFails",
 			parallelism: uint32Ptr(0),
 			subNodePhases: []v1alpha1.NodePhase{
@@ -1236,6 +1196,101 @@ func TestHandleArrayNodePhaseExecutingSubNodeFailures(t *testing.T) {
 	}
 }
 
+func TestHandleArrayNodePhaseExecutingSubNodeRetryBitArraySizing(t *testing.T) {
+	// Regression test: when the sub-node spec has a RetryStrategy with MinAttempts
+	// higher than config.DefaultMaxAttempts, the bitarray for tracking retry attempts
+	// must be sized to accommodate the sub-node's retry budget. Previously, before #6802,
+	// only the array node's retry strategy was considered for sizing, causing a panic when the
+	// attempt count exceeded the bitarray capacity:
+	// panic: Value [2] is too big. Max value is [1].
+	ctx := context.Background()
+
+	config.GetConfig().NodeConfig.DefaultMaxAttempts = 1
+	config.GetConfig().NodeConfig.MaxNodeRetriesOnSystemFailures = 0
+	config.GetConfig().NodeConfig.IgnoreRetryCause = false
+
+	// The task itself is configured with 3 attempts, the array node
+	// defaults to the config of 1 attempt max
+	subNodeMinAttempts := 3
+	nodeSpec := v1alpha1.NodeSpec{
+		ID: "foo",
+		ArrayNode: &v1alpha1.ArrayNodeSpec{
+			SubNodeSpec: &v1alpha1.NodeSpec{
+				Kind:    v1alpha1.NodeKindTask,
+				TaskRef: &taskRef,
+				RetryStrategy: &v1alpha1.RetryStrategy{
+					MinAttempts: &subNodeMinAttempts,
+				},
+			},
+		},
+	}
+
+	inputValues := map[string][]int64{
+		"foo": {1},
+		"bar": {2},
+	}
+	literalMap := convertMapToArrayLiterals(inputValues)
+
+	scope := promutils.NewTestScope()
+	dataStore, err := storage.NewDataStore(&storage.Config{
+		Type: storage.TypeMemory,
+	}, scope)
+	assert.NoError(t, err)
+
+	eventRecorder := newBufferedEventRecorder()
+	arrayNodeState := &handler.ArrayNodeState{
+		Phase: v1alpha1.ArrayNodePhaseNone,
+	}
+	nCtx := createNodeExecutionContext(dataStore, eventRecorder, nil, literalMap, &nodeSpec, arrayNodeState, 0, workflowMaxParallelism)
+
+	// initialize ArrayNodeHandler
+	nodeHandler := &mocks.NodeHandler{}
+	nodeHandler.EXPECT().Abort(mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	nodeHandler.EXPECT().Finalize(mock.Anything, mock.Anything).Return(nil)
+	nodeHandler.EXPECT().FinalizeRequired().Return(false)
+	nodeHandler.EXPECT().Handle(mock.Anything, mock.Anything).Return(
+		handler.DoTransition(handler.TransitionTypeEphemeral,
+			handler.PhaseInfoRetryableFailure(idlcore.ExecutionError_USER, "", "", &handler.ExecutionInfo{})),
+		nil,
+	)
+
+	arrayNodeHandler, err := createArrayNodeHandler(ctx, t, nodeHandler, dataStore, scope)
+	assert.NoError(t, err)
+
+	// evaluate node to transition from None to Executing (bitarrays are sized here)
+	_, err = arrayNodeHandler.Handle(ctx, nCtx)
+	assert.NoError(t, err)
+	assert.Equal(t, v1alpha1.ArrayNodePhaseExecuting, arrayNodeState.Phase)
+
+	for i := 0; i < len(arrayNodeState.SubNodePhases.GetItems()); i++ {
+		arrayNodeState.SubNodePhases.SetItem(i, bitarray.Item(v1alpha1.NodePhaseRunning))
+	}
+
+	for i := 0; i < len(arrayNodeState.SubNodeTaskPhases.GetItems()); i++ {
+		arrayNodeState.SubNodeTaskPhases.SetItem(i, bitarray.Item(core.PhaseRunning))
+	}
+
+	// evaluate node until failure - without #6802 this panics because the bitarray for
+	// SubNodeRetryAttempts was only sized for DefaultMaxAttempts (1) but the sub-node's
+	// RetryStrategy in this example allows 3 attempts
+	attempts := 1
+	for i := 0; i < 100; i++ { // safety limit
+		nCtx := createNodeExecutionContext(dataStore, eventRecorder, nil, literalMap, &nodeSpec, arrayNodeState, 0, workflowMaxParallelism)
+		_, err = arrayNodeHandler.Handle(ctx, nCtx)
+		assert.NoError(t, err)
+
+		if arrayNodeState.Phase == v1alpha1.ArrayNodePhaseFailing {
+			break
+		}
+
+		if arrayNodeState.SubNodePhases.GetItem(0) == bitarray.Item(v1alpha1.NodePhaseRetryableFailure) {
+			attempts++
+		}
+	}
+
+	assert.Equal(t, subNodeMinAttempts, attempts)
+}
+
 func TestHandleArrayNodePhaseSucceeding(t *testing.T) {
 	ctx := context.Background()
 	scope := promutils.NewTestScope()
@@ -1295,6 +1350,7 @@ func TestHandleArrayNodePhaseSucceeding(t *testing.T) {
 				Phase:                v1alpha1.ArrayNodePhaseSucceeding,
 				SubNodePhases:        subNodePhases,
 				SubNodeRetryAttempts: retryAttempts,
+				Error:                testError,
 			}
 
 			// create NodeExecutionContext
@@ -1361,6 +1417,7 @@ func TestHandleArrayNodePhaseSucceeding(t *testing.T) {
 
 			assert.Equal(t, 1, len(eventRecorder.taskExecutionEvents))
 			assert.Equal(t, idlcore.TaskExecution_SUCCEEDED, eventRecorder.taskExecutionEvents[0].GetPhase())
+			assert.Nil(t, eventRecorder.taskExecutionEvents[0].GetError())
 		})
 	}
 }
@@ -1406,6 +1463,7 @@ func TestHandleArrayNodePhaseFailing(t *testing.T) {
 			// initialize ArrayNodeState
 			arrayNodeState := &handler.ArrayNodeState{
 				Phase: v1alpha1.ArrayNodePhaseFailing,
+				Error: testError,
 			}
 
 			for _, item := range []struct {
@@ -1442,6 +1500,7 @@ func TestHandleArrayNodePhaseFailing(t *testing.T) {
 
 			assert.Equal(t, 1, len(eventRecorder.taskExecutionEvents))
 			assert.Equal(t, idlcore.TaskExecution_FAILED, eventRecorder.taskExecutionEvents[0].GetPhase())
+			assert.Equal(t, testError.GetMessage(), eventRecorder.taskExecutionEvents[0].GetError().GetMessage())
 		})
 	}
 }

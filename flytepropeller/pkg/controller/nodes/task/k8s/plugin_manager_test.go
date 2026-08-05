@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -275,8 +274,8 @@ func buildPluginWithAbortOverride(ctx context.Context, tctx pluginsCore.TaskExec
 
 func TestK8sTaskExecutor_Handle_LaunchResource(t *testing.T) {
 	ctx := context.TODO()
-	/*var tmpl *core.TaskTemplate
-	var inputs *core.LiteralMap*/
+	var tmpl *core.TaskTemplate
+	/*var inputs *core.LiteralMap*/
 
 	t.Run("jobQueued", func(t *testing.T) {
 		tCtx := getMockTaskContext(PluginPhaseNotStarted, PluginPhaseStarted)
@@ -301,7 +300,7 @@ func TestK8sTaskExecutor_Handle_LaunchResource(t *testing.T) {
 		assert.Equal(t, pluginsCore.PhaseQueued, transitionInfo.Phase())
 		createdPod := &v1.Pod{}
 
-		pluginManager.addObjectMetadata(tCtx.TaskExecutionMetadata(), createdPod, &config.K8sPluginConfig{})
+		pluginManager.addObjectMetadata(tCtx.TaskExecutionMetadata(), createdPod, &config.K8sPluginConfig{}, tmpl)
 		assert.NoError(t, fakeClient.Get(ctx, k8stypes.NamespacedName{Namespace: tCtx.TaskExecutionMetadata().GetNamespace(),
 			Name: tCtx.TaskExecutionMetadata().GetTaskExecutionID().GetGeneratedName()}, createdPod))
 		assert.Equal(t, tCtx.TaskExecutionMetadata().GetTaskExecutionID().GetGeneratedName(), createdPod.Name)
@@ -310,6 +309,7 @@ func TestK8sTaskExecutor_Handle_LaunchResource(t *testing.T) {
 
 	t.Run("jobAlreadyExists", func(t *testing.T) {
 		tctx := getMockTaskContext(PluginPhaseNotStarted, PluginPhaseStarted)
+		var tmpl *core.TaskTemplate
 		// common setup code
 		mockResourceHandler := &pluginsk8sMock.Plugin{}
 		mockResourceHandler.EXPECT().GetProperties().Return(k8s.PluginProperties{})
@@ -324,7 +324,7 @@ func TestK8sTaskExecutor_Handle_LaunchResource(t *testing.T) {
 		assert.NoError(t, err)
 
 		createdPod := &v1.Pod{}
-		pluginManager.addObjectMetadata(tctx.TaskExecutionMetadata(), createdPod, &config.K8sPluginConfig{})
+		pluginManager.addObjectMetadata(tctx.TaskExecutionMetadata(), createdPod, &config.K8sPluginConfig{}, tmpl)
 		assert.NoError(t, fakeClient.Create(ctx, createdPod))
 
 		transition, err := pluginManager.Handle(ctx, tctx)
@@ -408,8 +408,78 @@ func TestK8sTaskExecutor_Handle_LaunchResource(t *testing.T) {
 		assert.True(t, k8serrors.IsNotFound(err))
 	})
 
+	t.Run("jobBadRequest", func(t *testing.T) {
+		// BadRequest (HTTP 400) errors — typically from a validating admission
+		// webhook — are intrinsic to the request payload and not transient.
+		// Retrying with the same input will produce the same rejection.
+		// They should be treated as a permanent failure (PhasePermanentFailure)
+		// rather than the default retryable system error, so workflows surface
+		// the validation error to the user instead of exhausting their retry
+		// budget. See https://github.com/flyteorg/flyte/issues/6531.
+		tctx := getMockTaskContext(PluginPhaseNotStarted, PluginPhaseNotStarted)
+		mockResourceHandler := &pluginsk8sMock.Plugin{}
+		mockResourceHandler.EXPECT().GetProperties().Return(k8s.PluginProperties{})
+		mockResourceHandler.EXPECT().BuildResource(mock.Anything, mock.Anything).Return(&v1.Pod{}, nil)
+		fakeClient := extendedFakeClient{
+			Client:      fake.NewClientBuilder().WithRuntimeObjects().Build(),
+			CreateError: k8serrors.NewBadRequest("admission webhook \"deny.example.com\" denied the request: invalid pod spec"),
+		}
+		mockClientset := k8sfake.NewSimpleClientset()
+
+		pluginManager, err := NewPluginManager(ctx, dummySetupContext(fakeClient), k8s.PluginEntry{
+			ID:              "x",
+			ResourceToWatch: &v1.Pod{},
+			Plugin:          mockResourceHandler,
+		}, NewResourceMonitorIndex(), mockClientset)
+		assert.NoError(t, err)
+
+		transition, err := pluginManager.Handle(ctx, tctx)
+		assert.NoError(t, err)
+		assert.NotNil(t, transition)
+		transitionInfo := transition.Info()
+		assert.NotNil(t, transitionInfo)
+		assert.Equal(t, pluginsCore.PhasePermanentFailure, transitionInfo.Phase())
+		assert.Equal(t, "BadTaskFormat", transitionInfo.Err().GetCode())
+	})
+
+	t.Run("jobInvalid", func(t *testing.T) {
+		// Invalid (HTTP 422) errors indicate the request was well-formed but
+		// the object failed validation (e.g. an invalid field value). Like
+		// BadRequest, this is intrinsic to the payload and not transient, so
+		// it should be a permanent failure.
+		tctx := getMockTaskContext(PluginPhaseNotStarted, PluginPhaseNotStarted)
+		mockResourceHandler := &pluginsk8sMock.Plugin{}
+		mockResourceHandler.EXPECT().GetProperties().Return(k8s.PluginProperties{})
+		mockResourceHandler.EXPECT().BuildResource(mock.Anything, mock.Anything).Return(&v1.Pod{}, nil)
+		fakeClient := extendedFakeClient{
+			Client: fake.NewClientBuilder().WithRuntimeObjects().Build(),
+			CreateError: k8serrors.NewInvalid(
+				schema.GroupKind{Group: "", Kind: "Pod"},
+				"test-pod",
+				nil,
+			),
+		}
+		mockClientset := k8sfake.NewSimpleClientset()
+
+		pluginManager, err := NewPluginManager(ctx, dummySetupContext(fakeClient), k8s.PluginEntry{
+			ID:              "x",
+			ResourceToWatch: &v1.Pod{},
+			Plugin:          mockResourceHandler,
+		}, NewResourceMonitorIndex(), mockClientset)
+		assert.NoError(t, err)
+
+		transition, err := pluginManager.Handle(ctx, tctx)
+		assert.NoError(t, err)
+		assert.NotNil(t, transition)
+		transitionInfo := transition.Info()
+		assert.NotNil(t, transitionInfo)
+		assert.Equal(t, pluginsCore.PhasePermanentFailure, transitionInfo.Phase())
+		assert.Equal(t, "BadTaskFormat", transitionInfo.Err().GetCode())
+	})
+
 	t.Run("Insufficient resource blocking pod creation for the first time", func(t *testing.T) {
 		tctx := getMockTaskContext(PluginPhaseNotStarted, PluginPhaseNotStarted)
+		var tmpl *core.TaskTemplate
 		// Creating a mock k8s plugin
 		mockResourceHandler := &pluginsk8sMock.Plugin{}
 		mockResourceHandler.EXPECT().GetProperties().Return(k8s.PluginProperties{})
@@ -456,7 +526,7 @@ func TestK8sTaskExecutor_Handle_LaunchResource(t *testing.T) {
 		// Build a reference resource that is supposed to be identical to the resource built by pluginManager
 		referenceResource, err := mockResourceHandler.BuildResource(ctx, tctx)
 		assert.NoError(t, err)
-		pluginManager.addObjectMetadata(tctx.TaskExecutionMetadata(), referenceResource, config.GetK8sPluginConfig())
+		pluginManager.addObjectMetadata(tctx.TaskExecutionMetadata(), referenceResource, config.GetK8sPluginConfig(), tmpl)
 		refKey := backoff.ComposeResourceKey(referenceResource)
 		podBackOffHandler, found := backOffController.GetBackOffHandler(refKey)
 		assert.True(t, found)
@@ -767,19 +837,9 @@ func TestPluginManager_Handle_PluginState(t *testing.T) {
 		},
 	}
 
-	phaseInfoQueued := pluginsCore.PhaseInfoQueuedWithTaskInfo(time.Now(), pluginStateQueued.K8sPluginState.PhaseVersion, pluginStateQueued.K8sPluginState.Reason, nil)
-	phaseInfoQueuedVersion1 := pluginsCore.PhaseInfoQueuedWithTaskInfo(
-		time.Now(),
-		pluginStateQueuedVersion1.K8sPluginState.PhaseVersion,
-		pluginStateQueuedVersion1.K8sPluginState.Reason,
-		nil,
-	)
-	phaseInfoQueuedReasonBar := pluginsCore.PhaseInfoQueuedWithTaskInfo(
-		time.Now(),
-		pluginStateQueuedReasonBar.K8sPluginState.PhaseVersion,
-		pluginStateQueuedReasonBar.K8sPluginState.Reason,
-		nil,
-	)
+	phaseInfoQueued := pluginsCore.PhaseInfoQueuedWithTaskInfo(pluginStateQueued.K8sPluginState.PhaseVersion, pluginStateQueued.K8sPluginState.Reason, nil)
+	phaseInfoQueuedVersion1 := pluginsCore.PhaseInfoQueuedWithTaskInfo(pluginStateQueuedVersion1.K8sPluginState.PhaseVersion, pluginStateQueuedVersion1.K8sPluginState.Reason, nil)
+	phaseInfoQueuedReasonBar := pluginsCore.PhaseInfoQueuedWithTaskInfo(pluginStateQueuedReasonBar.K8sPluginState.PhaseVersion, pluginStateQueuedReasonBar.K8sPluginState.Reason, nil)
 	phaseInfoRunning := pluginsCore.PhaseInfoRunning(0, nil)
 
 	tests := []struct {
@@ -909,6 +969,7 @@ func TestPluginManager_AddObjectMetadata(t *testing.T) {
 	l := map[string]string{"l1": "lv1"}
 	a := map[string]string{"aKey": "aVal"}
 	tm := getMockTaskExecutionMetadataCustom(genName, ns, a, l, or)
+	var tmpl *core.TaskTemplate
 
 	cfg := config.GetK8sPluginConfig()
 
@@ -917,7 +978,7 @@ func TestPluginManager_AddObjectMetadata(t *testing.T) {
 		p := pluginsk8sMock.Plugin{}
 		p.EXPECT().GetProperties().Return(k8s.PluginProperties{})
 		pluginManager := PluginManager{plugin: &p}
-		pluginManager.addObjectMetadata(tm, o, cfg)
+		pluginManager.addObjectMetadata(tm, o, cfg, tmpl)
 		assert.Equal(t, genName, o.GetName())
 		assert.Equal(t, []metav1.OwnerReference{or}, o.GetOwnerReferences())
 		assert.Equal(t, ns, o.GetNamespace())
@@ -934,7 +995,7 @@ func TestPluginManager_AddObjectMetadata(t *testing.T) {
 		p.EXPECT().GetProperties().Return(k8s.PluginProperties{DisableInjectOwnerReferences: true})
 		pluginManager := PluginManager{plugin: &p}
 		o := &v1.Pod{}
-		pluginManager.addObjectMetadata(tm, o, cfg)
+		pluginManager.addObjectMetadata(tm, o, cfg, tmpl)
 		assert.Equal(t, genName, o.GetName())
 		// empty OwnerReference since we are ignoring
 		assert.Equal(t, 0, len(o.GetOwnerReferences()))
@@ -954,7 +1015,7 @@ func TestPluginManager_AddObjectMetadata(t *testing.T) {
 		// enable finalizer injection
 		cfg.InjectFinalizer = true
 		o := &v1.Pod{}
-		pluginManager.addObjectMetadata(tm, o, cfg)
+		pluginManager.addObjectMetadata(tm, o, cfg, tmpl)
 		assert.Equal(t, genName, o.GetName())
 		// empty OwnerReference since we are ignoring
 		assert.Equal(t, 1, len(o.GetOwnerReferences()))
@@ -974,7 +1035,7 @@ func TestPluginManager_AddObjectMetadata(t *testing.T) {
 		// disable finalizer injection
 		cfg.InjectFinalizer = false
 		o := &v1.Pod{}
-		pluginManager.addObjectMetadata(tm, o, cfg)
+		pluginManager.addObjectMetadata(tm, o, cfg, tmpl)
 		assert.Equal(t, genName, o.GetName())
 		// empty OwnerReference since we are ignoring
 		assert.Equal(t, 1, len(o.GetOwnerReferences()))
@@ -994,7 +1055,7 @@ func TestPluginManager_AddObjectMetadata(t *testing.T) {
 		// enable finalizer injection
 		cfg.InjectFinalizer = true
 		o := &v1.Pod{}
-		pluginManager.addObjectMetadata(tm, o, cfg)
+		pluginManager.addObjectMetadata(tm, o, cfg, tmpl)
 		assert.Equal(t, genName, o.GetName())
 		// empty OwnerReference since we are ignoring
 		assert.Equal(t, 1, len(o.GetOwnerReferences()))
@@ -1006,6 +1067,106 @@ func TestPluginManager_AddObjectMetadata(t *testing.T) {
 		assert.Equal(t, l, o.GetLabels())
 		assert.Equal(t, 1, len(o.GetFinalizers()))
 		assert.Contains(t, o.GetFinalizers(), finalizer)
+	})
+
+	t.Run("Task template K8s metadata", func(t *testing.T) {
+		o := &v1.Pod{}
+		p := pluginsk8sMock.Plugin{}
+		p.EXPECT().GetProperties().Return(k8s.PluginProperties{})
+
+		tmpl = &core.TaskTemplate{
+			Metadata: &core.TaskMetadata{
+				Metadata: &core.K8SObjectMetadata{
+					Labels: map[string]string{
+						"task_template_label": "task_template_label_val",
+					},
+					Annotations: map[string]string{
+						"task_template_annotation": "task_template_annotation_val",
+					},
+				},
+			},
+		}
+
+		pluginManager := PluginManager{plugin: &p}
+		pluginManager.addObjectMetadata(tm, o, cfg, tmpl)
+		assert.Equal(t, map[string]string{
+			"cluster-autoscaler.kubernetes.io/safe-to-evict": "false",
+			"aKey":                     "aVal",
+			"task_template_annotation": "task_template_annotation_val",
+		}, o.GetAnnotations())
+		assert.Equal(t, map[string]string{
+			"task_template_label": "task_template_label_val",
+			"l1":                  "lv1",
+		}, o.GetLabels())
+	})
+
+	t.Run("Task template K8s metadata overwrites object metadata", func(t *testing.T) {
+		o := &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{
+					"task_template_label": "should_be_overwritten",
+				},
+				Annotations: map[string]string{
+					"task_template_annotation": "should_be_overwritten",
+				},
+			},
+		}
+		p := pluginsk8sMock.Plugin{}
+		p.EXPECT().GetProperties().Return(k8s.PluginProperties{})
+
+		tmpl = &core.TaskTemplate{
+			Metadata: &core.TaskMetadata{
+				Metadata: &core.K8SObjectMetadata{
+					Labels: map[string]string{
+						"task_template_label": "task_template_label_val",
+					},
+					Annotations: map[string]string{
+						"task_template_annotation": "task_template_annotation_val",
+					},
+				},
+			},
+		}
+
+		pluginManager := PluginManager{plugin: &p}
+		pluginManager.addObjectMetadata(tm, o, cfg, tmpl)
+		assert.Equal(t, map[string]string{
+			"cluster-autoscaler.kubernetes.io/safe-to-evict": "false",
+			"aKey":                     "aVal",
+			"task_template_annotation": "task_template_annotation_val",
+		}, o.GetAnnotations())
+		assert.Equal(t, map[string]string{
+			"task_template_label": "task_template_label_val",
+			"l1":                  "lv1",
+		}, o.GetLabels())
+	})
+
+	t.Run("Task template K8s metadata overwritten by task execution metadata", func(t *testing.T) {
+		o := &v1.Pod{}
+		p := pluginsk8sMock.Plugin{}
+		p.EXPECT().GetProperties().Return(k8s.PluginProperties{})
+
+		tmpl = &core.TaskTemplate{
+			Metadata: &core.TaskMetadata{
+				Metadata: &core.K8SObjectMetadata{
+					Labels: map[string]string{
+						"l1": "should_be_overwritten",
+					},
+					Annotations: map[string]string{
+						"aKey": "should_be_overwritten",
+					},
+				},
+			},
+		}
+
+		pluginManager := PluginManager{plugin: &p}
+		pluginManager.addObjectMetadata(tm, o, cfg, tmpl)
+		assert.Equal(t, map[string]string{
+			"cluster-autoscaler.kubernetes.io/safe-to-evict": "false",
+			"aKey": "aVal",
+		}, o.GetAnnotations())
+		assert.Equal(t, map[string]string{
+			"l1": "lv1",
+		}, o.GetLabels())
 	})
 
 }

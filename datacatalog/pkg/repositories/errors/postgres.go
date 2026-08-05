@@ -2,10 +2,9 @@ package errors
 
 import (
 	"errors"
-	"fmt"
 	"reflect"
 
-	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v5/pgconn"
 	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
@@ -62,7 +61,7 @@ func (p *postgresErrorTransformer) ToDataCatalogError(err error) error {
 	case undefinedTable:
 		return catalogErrors.NewDataCatalogErrorf(codes.InvalidArgument, unsupportedTableOperation, pqError.Message)
 	default:
-		return catalogErrors.NewDataCatalogErrorf(codes.Unknown, fmt.Sprintf(defaultPgError, pqError.Code, pqError.Message)) //nolint
+		return catalogErrors.NewDataCatalogErrorf(codes.Unknown, defaultPgError, pqError.Code, pqError.Message)
 	}
 }
 

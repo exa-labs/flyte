@@ -1,14 +1,14 @@
 package project
 
 import (
-	"fmt"
+	"errors"
 	"io/ioutil"
 
 	"github.com/flyteorg/flyte/flytectl/clierrors"
 	"github.com/flyteorg/flyte/flytectl/cmd/config"
 	"github.com/flyteorg/flyte/flytectl/pkg/filters"
 	"github.com/flyteorg/flyte/flyteidl/gen/pb-go/flyteidl/admin"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 //go:generate pflags Config --default-var DefaultConfig --bind-default-var
@@ -74,12 +74,12 @@ func (c *ConfigProject) GetProjectSpec(cf *config.Config) (*admin.Project, error
 
 	project := cf.Project
 	if len(projectSpec.GetId()) == 0 && len(project) == 0 {
-		err := fmt.Errorf(clierrors.ErrProjectNotPassed) //nolint
+		err := errors.New(clierrors.ErrProjectNotPassed)
 		return nil, err
 	}
 
 	if len(projectSpec.GetId()) > 0 && len(project) > 0 {
-		err := fmt.Errorf(clierrors.ErrProjectIDBothPassed) //nolint
+		err := errors.New(clierrors.ErrProjectIDBothPassed)
 		return nil, err
 	}
 
@@ -104,7 +104,7 @@ func (c *ConfigProject) MapToAdminState() (admin.Project_ProjectState, error) {
 
 	if activate || archive {
 		if activate == archive {
-			return admin.Project_ACTIVE, fmt.Errorf(clierrors.ErrInvalidStateUpdate) //nolint
+			return admin.Project_ACTIVE, errors.New(clierrors.ErrInvalidStateUpdate)
 		}
 		if archive {
 			return admin.Project_ARCHIVED, nil

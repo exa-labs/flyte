@@ -67,7 +67,7 @@ func getGrpcConnection(ctx context.Context, connector *Deployment) (*grpc.Client
 	go func() {
 		<-ctx.Done()
 		if cerr := conn.Close(); cerr != nil {
-			grpclog.Infof("Failed to close conn to %s: %v", connector, cerr)
+			grpclog.Infof("Failed to close conn to %v: %v", connector, cerr)
 		}
 	}()
 
@@ -149,13 +149,11 @@ func getConnectorRegistry(ctx context.Context, cs *ClientSet) Registry {
 			strings.Join(maps.Keys(connectorSupportedTaskCategories), ", "))
 	}
 
-	// If the connector doesn't implement the metadata service, we construct the registry based on the configuration
+	// Always replace the connector registry with the settings defined in the configuration
 	for taskType, connectorDeploymentID := range cfg.ConnectorForTaskTypes {
 		if connectorDeployment, ok := cfg.ConnectorDeployments[connectorDeploymentID]; ok {
-			if _, ok := newConnectorRegistry[taskType]; !ok {
-				connector := &Connector{ConnectorDeployment: connectorDeployment, IsSync: false}
-				newConnectorRegistry[taskType] = map[int32]*Connector{defaultTaskTypeVersion: connector}
-			}
+			connector := &Connector{ConnectorDeployment: connectorDeployment, IsSync: false}
+			newConnectorRegistry[taskType] = map[int32]*Connector{defaultTaskTypeVersion: connector}
 		}
 	}
 

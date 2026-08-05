@@ -12,7 +12,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 	rawtrace "go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 
@@ -34,12 +34,6 @@ const (
 
 var tracerProviders = make(map[string]*trace.TracerProvider)
 var noopTracerProvider = noop.NewTracerProvider()
-
-// Deprecated: RegisterTracerProvider registers a tracer provider for the given service name. It uses a default context if necessary.
-// Instead, use RegisterTracerProviderWithContext.
-func RegisterTracerProvider(serviceName string, config *Config) error {
-	return RegisterTracerProviderWithContext(context.Background(), serviceName, config)
-}
 
 // RegisterTracerProviderWithContext registers a tracer provider for the given service name.
 func RegisterTracerProviderWithContext(ctx context.Context, serviceName string, config *Config) error {

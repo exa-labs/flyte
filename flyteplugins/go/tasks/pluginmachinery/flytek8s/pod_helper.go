@@ -38,6 +38,16 @@ const primaryContainerTemplateName = "primary"
 const primaryInitContainerTemplateName = "primary-init"
 const PrimaryContainerKey = "primary_container_name"
 
+var retryableStatusReasons = sets.NewString(
+	// Reasons that indicate the node was preempted aggressively.
+	// Kubelet can miss deleting the pod prior to the node being shutdown.
+	"Shutdown",
+	"Terminated",
+	"NodeShutdown",
+	// kubelet admission rejects the pod before the node gets assigned appropriate labels.
+	"NodeAffinity",
+)
+
 // AddRequiredNodeSelectorRequirements adds the provided v1.NodeSelectorRequirement
 // objects to an existing v1.Affinity object. If there are no existing required
 // node selectors, the new v1.NodeSelectorRequirement will be added as-is.
@@ -62,25 +72,6 @@ func AddRequiredNodeSelectorRequirements(base *v1.Affinity, new ...v1.NodeSelect
 	} else {
 		base.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = []v1.NodeSelectorTerm{v1.NodeSelectorTerm{MatchExpressions: new}}
 	}
-}
-
-// AddPreferredNodeSelectorRequirements appends the provided v1.NodeSelectorRequirement
-// objects to an existing v1.Affinity object's list of preferred scheduling terms.
-// See: https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#node-affinity-weight
-// for how weights are used during scheduling.
-func AddPreferredNodeSelectorRequirements(base *v1.Affinity, weight int32, new ...v1.NodeSelectorRequirement) {
-	if base.NodeAffinity == nil {
-		base.NodeAffinity = &v1.NodeAffinity{}
-	}
-	base.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution = append(
-		base.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution,
-		v1.PreferredSchedulingTerm{
-			Weight: weight,
-			Preference: v1.NodeSelectorTerm{
-				MatchExpressions: new,
-			},
-		},
-	)
 }
 
 // ApplyInterruptibleNodeSelectorRequirement configures the node selector requirement of the node-affinity using the configuration specified.
@@ -428,6 +419,12 @@ func ApplyFlytePodConfiguration(ctx context.Context, tCtx pluginsCore.TaskExecut
 		return nil, nil, err
 	}
 
+	// Fetch base pod template early to extract container resources for proper priority handling
+	basePodTemplate, err := getBasePodTemplate(ctx, tCtx, DefaultPodTemplateStore)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// add flyte resource customizations to containers
 	templateParameters := template.Parameters{
 		Inputs:            tCtx.InputReader(),
@@ -439,9 +436,16 @@ func ApplyFlytePodConfiguration(ctx context.Context, tCtx pluginsCore.TaskExecut
 
 	// iterate over the initContainers first
 	for index := range podSpec.InitContainers {
-		var resourceMode = ResourceCustomizationModeEnsureExistingResourcesInRange
+		var resourceMode = ResourceCustomizationModeMergeExistingResources
 
-		if err := AddFlyteCustomizationsToContainer(ctx, templateParameters, resourceMode, &podSpec.InitContainers[index]); err != nil {
+		// Extract pod template resources for this init container
+		var podTemplateResources *v1.ResourceRequirements
+		if basePodTemplate != nil {
+			resources := ExtractContainerResourcesFromPodTemplate(basePodTemplate, podSpec.InitContainers[index].Name, true)
+			podTemplateResources = &resources
+		}
+
+		if err := AddFlyteCustomizationsToContainerWithPodTemplate(ctx, templateParameters, resourceMode, &podSpec.InitContainers[index], podTemplateResources); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -454,7 +458,14 @@ func ApplyFlytePodConfiguration(ctx context.Context, tCtx pluginsCore.TaskExecut
 			resourceMode = ResourceCustomizationModeMergeExistingResources
 		}
 
-		if err := AddFlyteCustomizationsToContainer(ctx, templateParameters, resourceMode, &podSpec.Containers[index]); err != nil {
+		// Extract pod template resources for this container
+		var podTemplateResources *v1.ResourceRequirements
+		if basePodTemplate != nil {
+			resources := ExtractContainerResourcesFromPodTemplate(basePodTemplate, container.Name, false)
+			podTemplateResources = &resources
+		}
+
+		if err := AddFlyteCustomizationsToContainerWithPodTemplate(ctx, templateParameters, resourceMode, &podSpec.Containers[index], podTemplateResources); err != nil {
 			return nil, nil, err
 		}
 
@@ -681,7 +692,7 @@ func MergeWithBasePodTemplate(ctx context.Context, tCtx pluginsCore.TaskExecutio
 	}
 
 	// merge PodTemplate PodSpec with podSpec
-	var mergedObjectMeta *metav1.ObjectMeta = podTemplate.Template.ObjectMeta.DeepCopy()
+	var mergedObjectMeta = podTemplate.Template.ObjectMeta.DeepCopy()
 	if err := mergo.Merge(mergedObjectMeta, objectMeta, mergo.WithOverride, mergo.WithAppendSlice); err != nil {
 		return nil, nil, err
 	}
@@ -750,7 +761,8 @@ func MergeBasePodSpecOntoTemplate(templatePodSpec *v1.PodSpec, basePodSpec *v1.P
 
 		// Check for any name matching template containers
 		for _, templateContainer := range templatePodSpec.Containers {
-			if templateContainer.Name != container.Name {
+			// skip default and primary template containers as they are handled above
+			if container.Name == primaryContainerName || container.Name == defaultContainerTemplateName || templateContainer.Name != container.Name {
 				continue
 			}
 
@@ -803,7 +815,8 @@ func MergeBasePodSpecOntoTemplate(templatePodSpec *v1.PodSpec, basePodSpec *v1.P
 
 		// Check for any name matching template containers
 		for _, templateInitContainer := range templatePodSpec.InitContainers {
-			if templateInitContainer.Name != initContainer.Name {
+			// skip default and primary template init containers as they are handled above
+			if initContainer.Name == primaryInitContainerName || initContainer.Name == defaultInitContainerTemplateName || templateInitContainer.Name != initContainer.Name {
 				continue
 			}
 
@@ -931,13 +944,13 @@ func DemystifyPending(status v1.PodStatus, info pluginsCore.TaskInfo) (pluginsCo
 		return phaseInfo, nil
 	}
 
-	return pluginsCore.PhaseInfoQueuedWithTaskInfo(time.Now(), pluginsCore.DefaultPhaseVersion, "Scheduling", phaseInfo.Info()), nil
+	return pluginsCore.PhaseInfoQueuedWithTaskInfo(pluginsCore.DefaultPhaseVersion, "Scheduling", phaseInfo.Info()), nil
 }
 
 func demystifyPendingHelper(status v1.PodStatus, info pluginsCore.TaskInfo) (pluginsCore.PhaseInfo, time.Time) {
 	// Search over the difference conditions in the status object.  Note that the 'Pending' this function is
 	// demystifying is the 'phase' of the pod status. This is different than the PodReady condition type also used below
-	phaseInfo := pluginsCore.PhaseInfoQueuedWithTaskInfo(time.Now(), pluginsCore.DefaultPhaseVersion, "Demistify Pending", &info)
+	phaseInfo := pluginsCore.PhaseInfoQueuedWithTaskInfo(pluginsCore.DefaultPhaseVersion, "Demistify Pending", &info)
 
 	t := time.Now()
 	for _, c := range status.Conditions {
@@ -946,7 +959,7 @@ func demystifyPendingHelper(status v1.PodStatus, info pluginsCore.TaskInfo) (plu
 		case v1.PodScheduled:
 			if c.Status == v1.ConditionFalse {
 				// Waiting to be scheduled. This usually refers to inability to acquire resources.
-				return pluginsCore.PhaseInfoQueuedWithTaskInfo(t, pluginsCore.DefaultPhaseVersion, fmt.Sprintf("%s:%s", c.Reason, c.Message), phaseInfo.Info()), t
+				return pluginsCore.PhaseInfoQueuedWithTaskInfo(pluginsCore.DefaultPhaseVersion, fmt.Sprintf("%s:%s", c.Reason, c.Message), phaseInfo.Info()), t
 			}
 
 		case v1.PodReasonUnschedulable:
@@ -959,7 +972,7 @@ func demystifyPendingHelper(status v1.PodStatus, info pluginsCore.TaskInfo) (plu
 			//  reason: Unschedulable
 			// 	status: "False"
 			// 	type: PodScheduled
-			return pluginsCore.PhaseInfoQueuedWithTaskInfo(t, pluginsCore.DefaultPhaseVersion, fmt.Sprintf("%s:%s", c.Reason, c.Message), phaseInfo.Info()), t
+			return pluginsCore.PhaseInfoQueuedWithTaskInfo(pluginsCore.DefaultPhaseVersion, fmt.Sprintf("%s:%s", c.Reason, c.Message), phaseInfo.Info()), t
 
 		case v1.PodReady:
 			if c.Status == v1.ConditionFalse {
@@ -1004,7 +1017,7 @@ func demystifyPendingHelper(status v1.PodStatus, info pluginsCore.TaskInfo) (plu
 								// ErrImagePull -> Transitionary phase to ImagePullBackOff
 								// ContainerCreating -> Image is being downloaded
 								// PodInitializing -> Init containers are running
-								return pluginsCore.PhaseInfoInitializing(t, pluginsCore.DefaultPhaseVersion, fmt.Sprintf("[%s]: %s", finalReason, finalMessage), &pluginsCore.TaskInfo{OccurredAt: &t}), t
+								return pluginsCore.PhaseInfoInitializing(pluginsCore.DefaultPhaseVersion, fmt.Sprintf("[%s]: %s", finalReason, finalMessage), &pluginsCore.TaskInfo{OccurredAt: &t}), t
 
 							case "CreateContainerError":
 								// This may consist of:
@@ -1033,12 +1046,7 @@ func demystifyPendingHelper(status v1.PodStatus, info pluginsCore.TaskInfo) (plu
 										OccurredAt: &t,
 									}), t
 								}
-								return pluginsCore.PhaseInfoInitializing(
-									t,
-									pluginsCore.DefaultPhaseVersion,
-									fmt.Sprintf("[%s]: %s", finalReason, finalMessage),
-									&pluginsCore.TaskInfo{OccurredAt: &t},
-								), t
+								return pluginsCore.PhaseInfoInitializing(pluginsCore.DefaultPhaseVersion, fmt.Sprintf("[%s]: %s", finalReason, finalMessage), &pluginsCore.TaskInfo{OccurredAt: &t}), t
 
 							case "CreateContainerConfigError":
 								gracePeriod := config.GetK8sPluginConfig().CreateContainerConfigErrorGracePeriod.Duration
@@ -1047,12 +1055,7 @@ func demystifyPendingHelper(status v1.PodStatus, info pluginsCore.TaskInfo) (plu
 										OccurredAt: &t,
 									}), t
 								}
-								return pluginsCore.PhaseInfoInitializing(
-									t,
-									pluginsCore.DefaultPhaseVersion,
-									fmt.Sprintf("[%s]: %s", finalReason, finalMessage),
-									&pluginsCore.TaskInfo{OccurredAt: &t},
-								), t
+								return pluginsCore.PhaseInfoInitializing(pluginsCore.DefaultPhaseVersion, fmt.Sprintf("[%s]: %s", finalReason, finalMessage), &pluginsCore.TaskInfo{OccurredAt: &t}), t
 
 							case "InvalidImageName":
 								return pluginsCore.PhaseInfoFailureWithCleanup(finalReason, finalMessage, &pluginsCore.TaskInfo{
@@ -1067,12 +1070,7 @@ func demystifyPendingHelper(status v1.PodStatus, info pluginsCore.TaskInfo) (plu
 									}), t
 								}
 
-								return pluginsCore.PhaseInfoInitializing(
-									t,
-									pluginsCore.DefaultPhaseVersion,
-									fmt.Sprintf("[%s]: %s", finalReason, finalMessage),
-									&pluginsCore.TaskInfo{OccurredAt: &t},
-								), t
+								return pluginsCore.PhaseInfoInitializing(pluginsCore.DefaultPhaseVersion, fmt.Sprintf("[%s]: %s", finalReason, finalMessage), &pluginsCore.TaskInfo{OccurredAt: &t}), t
 
 							default:
 								// Since we are not checking for all error states, we may end up perpetually
@@ -1202,8 +1200,8 @@ func DemystifyFailure(ctx context.Context, status v1.PodStatus, info pluginsCore
 	//
 
 	var isSystemError bool
-	// In some versions of GKE the reason can also be "Terminated"
-	if code == "Shutdown" || code == "Terminated" {
+	// In some versions of GKE the reason can also be "Terminated" or "NodeShutdown"
+	if retryableStatusReasons.Has(code) {
 		isSystemError = true
 	}
 

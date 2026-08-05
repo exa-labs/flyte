@@ -5,10 +5,19 @@ metadata:
   name: syncresources
   namespace: {{ template "flyte.namespace" . }}
   labels: {{ include "flyteclusterresourcesync.labels" . | nindent 4 }}
+  {{- if .Values.cluster_resource_manager.annotations }}
+  annotations:
+    {{- with .Values.cluster_resource_manager.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
 spec:
   replicas: 1
   selector:
     matchLabels: {{ include "flyteclusterresourcesync.selectorLabels" . | nindent 6 }}
+  {{- with .Values.cluster_resource_manager.strategy }}
+  strategy: {{ tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
   template:
     metadata:
       annotations:
@@ -16,7 +25,7 @@ spec:
         {{- with .Values.cluster_resource_manager.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-        prometheus.io/path: {{ .Values.cluster_resource_manager.prometheus.path | quote }}
+        prometheus.io/path: "/metrics"
         prometheus.io/port: {{ .Values.cluster_resource_manager.prometheus.port | quote }}
         {{- with .Values.cluster_resource_manager.prometheus.enabled }}
         prometheus.io/scrape: "true"

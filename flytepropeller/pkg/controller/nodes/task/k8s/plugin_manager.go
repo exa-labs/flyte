@@ -23,8 +23,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
+	"github.com/flyteorg/flyte/flyteidl/gen/pb-go/flyteidl/core"
 	"github.com/flyteorg/flyte/flyteplugins/go/tasks/errors"
 	pluginsCore "github.com/flyteorg/flyte/flyteplugins/go/tasks/pluginmachinery/core"
 	"github.com/flyteorg/flyte/flyteplugins/go/tasks/pluginmachinery/flytek8s/config"
@@ -44,9 +46,6 @@ import (
 
 const (
 	finalizer = "flyte.org/finalizer-k8s"
-	// Old non-domain-qualified finalizer for backwards compatibility
-	// This should eventually be removed
-	oldFinalizer = "flyte/flytek8s"
 )
 
 const pluginStateVersion = 1
@@ -66,12 +65,13 @@ type PluginState struct {
 }
 
 type PluginMetrics struct {
-	Scope           promutils.Scope
-	GetCacheMiss    labeled.StopWatch
-	GetCacheHit     labeled.StopWatch
-	GetAPILatency   labeled.StopWatch
-	ResourceDeleted labeled.Counter
-	TaskPodErrors   *prometheus.CounterVec
+	Scope                   promutils.Scope
+	GetCacheMiss            labeled.StopWatch
+	GetCacheHit             labeled.StopWatch
+	GetAPILatency           labeled.StopWatch
+	ResourceDeleted         labeled.Counter
+	TaskPodErrors           *prometheus.CounterVec
+	ClearFinalizersFailures labeled.Counter
 }
 
 func newPluginMetrics(s promutils.Scope) PluginMetrics {
@@ -87,6 +87,7 @@ func newPluginMetrics(s promutils.Scope) PluginMetrics {
 			" called with a deleted resource.", s),
 		TaskPodErrors: s.MustNewCounterVec("task_pod_errors", "Counts how many times task pods failed in given phase with given code",
 			"phase", "error_code"),
+		ClearFinalizersFailures: labeled.NewCounter("clear_finalizers_failures", "Counts how many times clearing finalizers failed.", s),
 	}
 }
 
@@ -110,10 +111,13 @@ type PluginManager struct {
 	updateBackoffRetries      int
 }
 
-func (e *PluginManager) addObjectMetadata(taskCtx pluginsCore.TaskExecutionMetadata, o client.Object, cfg *config.K8sPluginConfig) {
+func (e *PluginManager) addObjectMetadata(taskCtx pluginsCore.TaskExecutionMetadata, o client.Object, cfg *config.K8sPluginConfig, taskTemplate *core.TaskTemplate) {
+	taskMetadata := taskTemplate.GetMetadata()
+	k8sMetadata := taskMetadata.GetMetadata()
+
 	o.SetNamespace(taskCtx.GetNamespace())
-	o.SetAnnotations(pluginsUtils.UnionMaps(cfg.DefaultAnnotations, o.GetAnnotations(), pluginsUtils.CopyMap(taskCtx.GetAnnotations())))
-	o.SetLabels(pluginsUtils.UnionMaps(cfg.DefaultLabels, o.GetLabels(), pluginsUtils.CopyMap(taskCtx.GetLabels())))
+	o.SetAnnotations(pluginsUtils.UnionMaps(cfg.DefaultAnnotations, o.GetAnnotations(), k8sMetadata.GetAnnotations(), pluginsUtils.CopyMap(taskCtx.GetAnnotations())))
+	o.SetLabels(pluginsUtils.UnionMaps(cfg.DefaultLabels, o.GetLabels(), k8sMetadata.GetLabels(), pluginsUtils.CopyMap(taskCtx.GetLabels())))
 	o.SetName(taskCtx.GetTaskExecutionID().GetGeneratedName())
 
 	if !e.plugin.GetProperties().DisableInjectOwnerReferences {
@@ -207,10 +211,20 @@ func (e *PluginManager) launchResource(ctx context.Context, tCtx pluginsCore.Tas
 
 	o, err := e.plugin.BuildResource(ctx, k8sTaskCtx)
 	if err != nil {
+		// If the resource cannot be constructed then permanently fail because this does not
+		// depend on any external system so this is not a transient error. Notify the user
+		// immediately so they can fix the task definition.
+		return pluginsCore.DoTransition(pluginsCore.PhaseInfoFailure("FailedToBuildResource",
+			fmt.Sprintf("could not build resource for task: %v", err.Error()), nil)), nil
+	}
+
+	taskTemplate, err := tCtx.TaskReader().Read(ctx)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to read task template. Error: %v", err)
 		return pluginsCore.UnknownTransition, err
 	}
 
-	e.addObjectMetadata(k8sTaskCtxMetadata, o, config.GetK8sPluginConfig())
+	e.addObjectMetadata(k8sTaskCtxMetadata, o, config.GetK8sPluginConfig(), taskTemplate)
 	logger.Infof(ctx, "Creating Object: Type:[%v], Object:[%v/%v]", o.GetObjectKind().GroupVersionKind(), o.GetNamespace(), o.GetName())
 
 	key := backoff.ComposeResourceKey(o)
@@ -238,15 +252,21 @@ func (e *PluginManager) launchResource(ctx context.Context, tCtx pluginsCore.Tas
 				fmt.Sprintf("requested resources exceed limits: %v", err.Error()), nil)), nil
 		} else if stdErrors.IsCausedBy(err, errors.BackOffError) {
 			logger.Warnf(ctx, "Failed to launch job, resource quota exceeded. err: %v", err)
-			return pluginsCore.DoTransition(pluginsCore.PhaseInfoWaitingForResourcesInfo(time.Now(), pluginsCore.DefaultPhaseVersion, fmt.Sprintf("Exceeded resourcequota: %s", err.Error()), nil)), nil
+			return pluginsCore.DoTransition(pluginsCore.PhaseInfoWaitingForResourcesInfo(pluginsCore.DefaultPhaseVersion, fmt.Sprintf("Exceeded resourcequota: %s", err.Error()), nil)), nil
 		} else if e.backOffController == nil && backoff.IsResourceQuotaExceeded(err) {
 			logger.Warnf(ctx, "Failed to launch job, resource quota exceeded and the operation is not guarded by back-off. err: %v", err)
-			return pluginsCore.DoTransition(pluginsCore.PhaseInfoWaitingForResourcesInfo(time.Now(), pluginsCore.DefaultPhaseVersion, fmt.Sprintf("Exceeded resourcequota: %s", err.Error()), nil)), nil
+			return pluginsCore.DoTransition(pluginsCore.PhaseInfoWaitingForResourcesInfo(pluginsCore.DefaultPhaseVersion, fmt.Sprintf("Exceeded resourcequota: %s", err.Error()), nil)), nil
 		} else if k8serrors.IsForbidden(err) {
 			return pluginsCore.DoTransition(pluginsCore.PhaseInfoRetryableFailure("RuntimeFailure", err.Error(), nil)), nil
 		} else if k8serrors.IsBadRequest(err) || k8serrors.IsInvalid(err) {
+			// BadRequest (HTTP 400) and Invalid (HTTP 422) errors are intrinsic
+			// to the request payload and not transient. The most common source
+			// is a validating admission webhook rejecting the pod spec; retrying
+			// with the same input will produce the same rejection. Treat as a
+			// permanent failure so the validation error surfaces to the user
+			// instead of exhausting the workflow's retry budget.
 			logger.Errorf(ctx, "Badly formatted resource for plugin [%s], err %s", e.id, err)
-			// return pluginsCore.DoTransition(pluginsCore.PhaseInfoFailure("BadTaskFormat", err.Error(), nil)), nil
+			return pluginsCore.DoTransition(pluginsCore.PhaseInfoFailure("BadTaskFormat", err.Error(), nil)), nil
 		} else if k8serrors.IsRequestEntityTooLargeError(err) {
 			logger.Errorf(ctx, "Badly formatted resource for plugin [%s], err %s", e.id, err)
 			return pluginsCore.DoTransition(pluginsCore.PhaseInfoFailure("EntityTooLarge", err.Error(), nil)), nil
@@ -265,7 +285,13 @@ func (e *PluginManager) getResource(ctx context.Context, tCtx pluginsCore.TaskEx
 		logger.Errorf(ctx, "Failed to build the Resource with name: %v. Error: %v", tCtx.TaskExecutionMetadata().GetTaskExecutionID().GetGeneratedName(), err)
 		return nil, err
 	}
-	e.addObjectMetadata(tCtx.TaskExecutionMetadata(), o, config.GetK8sPluginConfig())
+	taskTemplate, err := tCtx.TaskReader().Read(ctx)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to read task template. Error: %v", err)
+		return nil, err
+	}
+
+	e.addObjectMetadata(tCtx.TaskExecutionMetadata(), o, config.GetK8sPluginConfig(), taskTemplate)
 	return o, nil
 }
 
@@ -459,26 +485,24 @@ func (e PluginManager) Abort(ctx context.Context, tCtx pluginsCore.TaskExecution
 
 // clearFinalizer removes the Flyte finalizer (if it exists) from the k8s resource
 func (e *PluginManager) clearFinalizer(ctx context.Context, o client.Object) error {
+	original := o.DeepCopyObject().(client.Object)
+
 	// Checking for the old finalizer too for backwards compatibility. This should eventually be removed
 	// Go does short-circuiting and we have to make sure both are removed
-	orig := o.DeepCopyObject().(client.Object)
 	finalizerRemoved := controllerutil.RemoveFinalizer(o, finalizer)
-	oldFinalizerRemoved := controllerutil.RemoveFinalizer(o, oldFinalizer)
-
-	if finalizerRemoved || oldFinalizerRemoved {
-		// Use a MergeFrom patch to reduce conflicts with concurrent reconcilers.
-		if err := e.kubeClient.GetClient().Patch(ctx, o, client.MergeFrom(orig)); err != nil {
-			if !isK8sObjectNotExists(err) {
-				logger.Warningf(ctx, "Failed to clear finalizer for Resource with name: %v/%v. Error: %v",
-					o.GetNamespace(), o.GetName(), err)
-				return err
-			}
+	if finalizerRemoved {
+		// Patch finalizers to reduce conflicts caused by a stale informer cache vs full Update().
+		err := e.kubeClient.GetClient().Patch(ctx, o, client.MergeFrom(original))
+		if err != nil && !isK8sObjectNotExists(err) {
+			e.metrics.ClearFinalizersFailures.Inc(ctx)
+			logger.Warningf(ctx, "Failed to clear finalizer for Resource with name: %v/%v. Error: %v",
+				o.GetNamespace(), o.GetName(), err)
+			return err
 		}
 	} else {
 		logger.Debugf(ctx, "Finalizer is already cleared from Resource with name: %v/%v",
 			o.GetNamespace(), o.GetName())
 	}
-
 	return nil
 }
 
@@ -591,7 +615,51 @@ func NewPluginManager(ctx context.Context, iCtx pluginsCore.SetupContext, entry 
 	}
 
 	logger.Infof(ctx, "Initializing K8s plugin [%s]", entry.ID)
-	src := source.Kind(iCtx.KubeClient().GetCache(), entry.ResourceToWatch)
+
+	metricsScope := iCtx.MetricsScope().NewSubScope(entry.ID)
+	updateCount := labeled.NewCounter("informer_update", "Update events from informer", metricsScope)
+	droppedUpdateCount := labeled.NewCounter("informer_update_dropped", "Update events from informer that have the same resource version", metricsScope)
+	genericCount := labeled.NewCounter("informer_generic", "Generic events from informer", metricsScope)
+
+	enqueueOwner := iCtx.EnqueueOwner()
+
+	handlers := handler.Funcs{
+		CreateFunc: func(ctx context.Context, evt event.CreateEvent, q2 workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			logger.Debugf(context.Background(), "Create received for %s, ignoring.", evt.Object.GetName())
+		},
+		UpdateFunc: func(ctx context.Context, evt event.UpdateEvent, q2 workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			if evt.ObjectNew == nil {
+				logger.Warn(context.Background(), "Received an Update event with nil MetaNew.")
+			} else if evt.ObjectOld == nil || evt.ObjectOld.GetResourceVersion() != evt.ObjectNew.GetResourceVersion() {
+				// attempt to enqueue this tasks owner by retrieving the workfowID from the resource labels
+				newCtx := contextutils.WithNamespace(context.Background(), evt.ObjectNew.GetNamespace())
+
+				workflowID, exists := evt.ObjectNew.GetLabels()[compiler.ExecutionIDLabel]
+				if exists {
+					logger.Debugf(ctx, "Enqueueing owner for updated object [%v/%v]", evt.ObjectNew.GetNamespace(), evt.ObjectNew.GetName())
+					namespacedName := k8stypes.NamespacedName{
+						Name:      workflowID,
+						Namespace: evt.ObjectNew.GetNamespace(),
+					}
+
+					if err := enqueueOwner(namespacedName); err != nil {
+						logger.Warnf(context.Background(), "Failed to handle Update event for object [%v]", namespacedName)
+					}
+					updateCount.Inc(newCtx)
+				}
+			} else {
+				newCtx := contextutils.WithNamespace(context.Background(), evt.ObjectNew.GetNamespace())
+				droppedUpdateCount.Inc(newCtx)
+			}
+		},
+		DeleteFunc: func(ctx context.Context, evt event.DeleteEvent, q2 workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			logger.Debugf(context.Background(), "Delete received for %s, ignoring.", evt.Object.GetName())
+		},
+		GenericFunc: func(ctx context.Context, evt event.GenericEvent, q2 workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			logger.Debugf(context.Background(), "Generic received for %s, ignoring.", evt.Object.GetName())
+			genericCount.Inc(ctx)
+		},
+	}
 
 	workflowParentPredicate := func(o metav1.Object) bool {
 		if entry.Plugin.GetProperties().DisableInjectOwnerReferences {
@@ -608,72 +676,32 @@ func NewPluginManager(ctx context.Context, iCtx pluginsCore.SetupContext, entry 
 		return false
 	}
 
-	metricsScope := iCtx.MetricsScope().NewSubScope(entry.ID)
-	updateCount := labeled.NewCounter("informer_update", "Update events from informer", metricsScope)
-	droppedUpdateCount := labeled.NewCounter("informer_update_dropped", "Update events from informer that have the same resource version", metricsScope)
-	genericCount := labeled.NewCounter("informer_generic", "Generic events from informer", metricsScope)
+	predicates := predicate.Funcs{
+		CreateFunc: func(createEvent event.CreateEvent) bool {
+			return false
+		},
+		UpdateFunc: func(updateEvent event.UpdateEvent) bool {
+			// TODO we should filter out events in case there are no updates observed between the old and new?
+			return workflowParentPredicate(updateEvent.ObjectNew)
+		},
+		DeleteFunc: func(deleteEvent event.DeleteEvent) bool {
+			return false
+		},
+		GenericFunc: func(genericEvent event.GenericEvent) bool {
+			return workflowParentPredicate(genericEvent.Object)
+		},
+	}
 
-	enqueueOwner := iCtx.EnqueueOwner()
+	src := source.Kind(iCtx.KubeClient().GetCache(), entry.ResourceToWatch, handlers, predicates)
+
 	err := src.Start(
 		ctx,
-		// Handlers
-		handler.Funcs{
-			CreateFunc: func(ctx context.Context, evt event.CreateEvent, q2 workqueue.RateLimitingInterface) {
-				logger.Debugf(context.Background(), "Create received for %s, ignoring.", evt.Object.GetName())
-			},
-			UpdateFunc: func(ctx context.Context, evt event.UpdateEvent, q2 workqueue.RateLimitingInterface) {
-				if evt.ObjectNew == nil {
-					logger.Warn(context.Background(), "Received an Update event with nil MetaNew.")
-				} else if evt.ObjectOld == nil || evt.ObjectOld.GetResourceVersion() != evt.ObjectNew.GetResourceVersion() {
-					// attempt to enqueue this tasks owner by retrieving the workfowID from the resource labels
-					newCtx := contextutils.WithNamespace(context.Background(), evt.ObjectNew.GetNamespace())
-
-					workflowID, exists := evt.ObjectNew.GetLabels()[compiler.ExecutionIDLabel]
-					if exists {
-						logger.Debugf(ctx, "Enqueueing owner for updated object [%v/%v]", evt.ObjectNew.GetNamespace(), evt.ObjectNew.GetName())
-						namespacedName := k8stypes.NamespacedName{
-							Name:      workflowID,
-							Namespace: evt.ObjectNew.GetNamespace(),
-						}
-
-						if err := enqueueOwner(namespacedName); err != nil {
-							logger.Warnf(context.Background(), "Failed to handle Update event for object [%v]", namespacedName)
-						}
-						updateCount.Inc(newCtx)
-					}
-				} else {
-					newCtx := contextutils.WithNamespace(context.Background(), evt.ObjectNew.GetNamespace())
-					droppedUpdateCount.Inc(newCtx)
-				}
-			},
-			DeleteFunc: func(ctx context.Context, evt event.DeleteEvent, q2 workqueue.RateLimitingInterface) {
-				logger.Debugf(context.Background(), "Delete received for %s, ignoring.", evt.Object.GetName())
-			},
-			GenericFunc: func(ctx context.Context, evt event.GenericEvent, q2 workqueue.RateLimitingInterface) {
-				logger.Debugf(context.Background(), "Generic received for %s, ignoring.", evt.Object.GetName())
-				genericCount.Inc(ctx)
-			},
-		},
 		// Queue - configured for high throughput so we very infrequently rate limit node updates
-		workqueue.NewNamedRateLimitingQueue(&workqueue.BucketRateLimiter{
+		workqueue.NewTypedRateLimitingQueueWithConfig[reconcile.Request](&workqueue.TypedBucketRateLimiter[reconcile.Request]{
 			Limiter: rate.NewLimiter(rate.Limit(10000), 10000),
-		}, entry.ResourceToWatch.GetObjectKind().GroupVersionKind().Kind),
-		// Predicates
-		predicate.Funcs{
-			CreateFunc: func(createEvent event.CreateEvent) bool {
-				return false
-			},
-			UpdateFunc: func(updateEvent event.UpdateEvent) bool {
-				// TODO we should filter out events in case there are no updates observed between the old and new?
-				return workflowParentPredicate(updateEvent.ObjectNew)
-			},
-			DeleteFunc: func(deleteEvent event.DeleteEvent) bool {
-				return false
-			},
-			GenericFunc: func(genericEvent event.GenericEvent) bool {
-				return workflowParentPredicate(genericEvent.Object)
-			},
-		})
+		}, workqueue.TypedRateLimitingQueueConfig[reconcile.Request]{
+			Name: entry.ResourceToWatch.GetObjectKind().GroupVersionKind().Kind,
+		}))
 
 	if err != nil {
 		return nil, err

@@ -1,5 +1,4 @@
 //go:build integration
-// +build integration
 
 package tests
 
@@ -329,7 +328,7 @@ func TestGetTaskExecutionData(t *testing.T) {
 	}
 
 	if err != nil {
-		t.Fatalf(err.Error())
+		t.Fatal(err.Error())
 	}
 
 	ctx := context.Background()

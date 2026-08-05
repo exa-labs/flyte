@@ -7,6 +7,42 @@ commonLabels: {}
 # commonAnnotations Add annotations to all the deployed resources
 commonAnnotations: {}
 
+# replicaCount Number of Flyte binary replicas
+replicaCount: 1
+
+# strategy Configure the Flyte binary deployment strategy
+strategy:
+  type: Recreate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# ha Configure multi-replica Flyte binary deployments
+ha:
+  enabled: false
+  leaderElection:
+    enabled: false
+    lockName: propeller-leader
+    lockNamespace: flyte
+    leaseDuration: 15s
+    renewDeadline: 10s
+    retryPeriod: 2s
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: flyte-binary
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: topology.kubernetes.io/zone
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: flyte-binary
+
 # flyte-core-components: Configuration of flyte's core components
 flyte-core-components:
   # admin Configuration to disable FlyteAdmin or any of its components
@@ -170,9 +206,9 @@ configuration:
     # image Configure image to use for CoPilot sidecar
     image:
       # repository CoPilot sidecar image repository
-      repository: cr.flyte.org/flyteorg/flytecopilot # FLYTECOPILOT_IMAGE
+      repository: cr.flyte.org/flyteorg/flytecopilot  # FLYTECOPILOT_IMAGE
       # tag CoPilot sidecar image tag
-      tag: v1.15.3 # FLYTECOPILOT_TAG
+      tag: v1.16.8  # FLYTECOPILOT_TAG
   # connectorService Flyte Connector configuration
   connectorService:
     defaultConnector:
@@ -228,9 +264,9 @@ deployment:
   # image Configure image to use for Flyte
   image:
     # repository Flyte image repository
-    repository: cr.flyte.org/flyteorg/flyte-binary # FLYTE_IMAGE
+    repository: cr.flyte.org/flyteorg/flyte-binary  # FLYTE_IMAGE
     # tag Flyte image tag
-    tag: latest # FLYTE_TAG
+    tag: latest  # FLYTE_TAG
     # pullPolicy Flyte image pull policy
     pullPolicy: IfNotPresent
   # extraEnvVars Array with extra environment variables to add to Flyte

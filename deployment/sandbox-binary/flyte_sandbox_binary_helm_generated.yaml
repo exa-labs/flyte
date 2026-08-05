@@ -6,7 +6,7 @@ metadata:
   name: flyte-flyte-binary
   namespace: "flyte"
   labels:
-    helm.sh/chart: flyte-binary-v0.1.10
+    helm.sh/chart: flyte-binary-v0.1.11
     app.kubernetes.io/name: flyte-binary
     app.kubernetes.io/instance: flyte
     app.kubernetes.io/version: "1.16.0"
@@ -20,7 +20,7 @@ metadata:
   name: flyte-flyte-binary-config-secret
   namespace: "flyte"
   labels:
-    helm.sh/chart: flyte-binary-v0.1.10
+    helm.sh/chart: flyte-binary-v0.1.11
     app.kubernetes.io/name: flyte-binary
     app.kubernetes.io/instance: flyte
     app.kubernetes.io/version: "1.16.0"
@@ -36,7 +36,7 @@ metadata:
   name: flyte-flyte-binary-cluster-resource-templates
   namespace: "flyte"
   labels:
-    helm.sh/chart: flyte-binary-v0.1.10
+    helm.sh/chart: flyte-binary-v0.1.11
     app.kubernetes.io/name: flyte-binary
     app.kubernetes.io/instance: flyte
     app.kubernetes.io/version: "1.16.0"
@@ -56,7 +56,7 @@ metadata:
   name: flyte-flyte-binary-config
   namespace: "flyte"
   labels:
-    helm.sh/chart: flyte-binary-v0.1.10
+    helm.sh/chart: flyte-binary-v0.1.11
     app.kubernetes.io/name: flyte-binary
     app.kubernetes.io/instance: flyte
     app.kubernetes.io/version: "1.16.0"
@@ -120,7 +120,7 @@ data:
         stackdriver-enabled: false
       k8s:
         co-pilot:
-          image: "cr.flyte.org/flyteorg/flytecopilot:v1.15.3"
+          image: "cr.flyte.org/flyteorg/flytecopilot:v1.16.8"
       k8s-array:
         logs:
           config:
@@ -156,7 +156,7 @@ metadata:
   name: flyte-flyte-binary-cluster-role
   namespace: "flyte"
   labels:
-    helm.sh/chart: flyte-binary-v0.1.10
+    helm.sh/chart: flyte-binary-v0.1.11
     app.kubernetes.io/name: flyte-binary
     app.kubernetes.io/instance: flyte
     app.kubernetes.io/version: "1.16.0"
@@ -245,7 +245,7 @@ metadata:
   name: flyte-flyte-binary-cluster-role-binding
   namespace: "flyte"
   labels:
-    helm.sh/chart: flyte-binary-v0.1.10
+    helm.sh/chart: flyte-binary-v0.1.11
     app.kubernetes.io/name: flyte-binary
     app.kubernetes.io/instance: flyte
     app.kubernetes.io/version: "1.16.0"
@@ -267,7 +267,7 @@ metadata:
   name: flyte-flyte-binary-grpc
   namespace: "flyte"
   labels:
-    helm.sh/chart: flyte-binary-v0.1.10
+    helm.sh/chart: flyte-binary-v0.1.11
     app.kubernetes.io/name: flyte-binary
     app.kubernetes.io/instance: flyte
     app.kubernetes.io/version: "1.16.0"
@@ -292,7 +292,7 @@ metadata:
   name: flyte-flyte-binary-http
   namespace: "flyte"
   labels:
-    helm.sh/chart: flyte-binary-v0.1.10
+    helm.sh/chart: flyte-binary-v0.1.11
     app.kubernetes.io/name: flyte-binary
     app.kubernetes.io/instance: flyte
     app.kubernetes.io/version: "1.16.0"
@@ -317,7 +317,7 @@ metadata:
   name: flyte-flyte-binary-webhook
   namespace: "flyte"
   labels:
-    helm.sh/chart: flyte-binary-v0.1.10
+    helm.sh/chart: flyte-binary-v0.1.11
     app.kubernetes.io/name: flyte-binary
     app.kubernetes.io/instance: flyte
     app.kubernetes.io/version: "1.16.0"
@@ -341,7 +341,7 @@ metadata:
   name: flyte-flyte-binary
   namespace: "flyte"
   labels:
-    helm.sh/chart: flyte-binary-v0.1.10
+    helm.sh/chart: flyte-binary-v0.1.11
     app.kubernetes.io/name: flyte-binary
     app.kubernetes.io/instance: flyte
     app.kubernetes.io/version: "1.16.0"
@@ -363,9 +363,9 @@ spec:
         app.kubernetes.io/instance: flyte
         app.kubernetes.io/component: flyte-binary
       annotations:
-        checksum/configuration: 419cc134c68f537b677c6f5e84df78a0dc57b3bb6862768450631444def83799
-        checksum/configuration-secret: d5d93f4e67780b21593dc3799f0f6682aab0765e708e4020939975d14d44f929
-        checksum/cluster-resource-templates: 7dfa59f3d447e9c099b8f8ffad3af466fecbc9cf9f8c97295d9634254a55d4ae
+        checksum/configuration: c8d23ae2bd9e3629009a7e0a2243e911b254986213bb083e5ab0bf2104ce7249
+        checksum/configuration-secret: cdeac0f49910ab335422558d536f474e64a003a9f829b66aacb283ec0ce3947b
+        checksum/cluster-resource-templates: 7a157d07f8eda5dbea0f903cebd639fee89dab6f7ad2fb0add978f497593e594
     spec:
       serviceAccountName: flyte-flyte-binary
       initContainers:

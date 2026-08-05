@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mitchellh/mapstructure"
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -233,6 +233,20 @@ func TestConfig_SetFlags(t *testing.T) {
 			cmdFlags.Set("vaultSecretManager.role", testValue)
 			if vString, err := cmdFlags.GetString("vaultSecretManager.role"); err == nil {
 				testDecodeJson_Config(t, fmt.Sprintf("%v", vString), &actual.VaultSecretManagerConfig.Role)
+
+			} else {
+				assert.FailNow(t, err.Error())
+			}
+		})
+	})
+	t.Run("Test_disableCreateMutatingWebhookConfig", func(t *testing.T) {
+
+		t.Run("Override", func(t *testing.T) {
+			testValue := "1"
+
+			cmdFlags.Set("disableCreateMutatingWebhookConfig", testValue)
+			if vBool, err := cmdFlags.GetBool("disableCreateMutatingWebhookConfig"); err == nil {
+				testDecodeJson_Config(t, fmt.Sprintf("%v", vBool), &actual.DisableCreateMutatingWebhookConfig)
 
 			} else {
 				assert.FailNow(t, err.Error())

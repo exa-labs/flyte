@@ -1,9 +1,8 @@
 ARG FLYTECONSOLE_VERSION=latest
-ARG FLYTECONSOLE_IMAGE=ghcr.io/flyteorg/flyteconsole:${FLYTECONSOLE_VERSION}
-FROM ${FLYTECONSOLE_IMAGE} AS flyteconsole
+FROM ghcr.io/flyteorg/flyteconsole:${FLYTECONSOLE_VERSION} AS flyteconsole
 
 
-FROM --platform=${BUILDPLATFORM} golang:1.22-bookworm AS flytebuilder
+FROM --platform=${BUILDPLATFORM} golang:1.26-bookworm AS flytebuilder
 
 ARG TARGETARCH
 ENV GOARCH="${TARGETARCH}"

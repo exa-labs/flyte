@@ -15,6 +15,10 @@ import (
 type FakeInformers struct {
 }
 
+func (f *FakeInformers) RemoveInformer(ctx context.Context, obj client.Object) error {
+	return nil
+}
+
 func (f *FakeInformers) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 	return nil
 }
@@ -41,10 +45,6 @@ func (f *FakeInformers) Start(ctx context.Context) error {
 
 func (f *FakeInformers) GetInformer(ctx context.Context, obj client.Object, opts ...cache.InformerGetOption) (cache.Informer, error) {
 	return &controllertest.FakeInformer{}, nil
-}
-
-func (f *FakeInformers) RemoveInformer(ctx context.Context, obj client.Object) error {
-	return nil
 }
 
 func NewFakeKubeClient() *Client {

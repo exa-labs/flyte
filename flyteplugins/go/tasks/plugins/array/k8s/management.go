@@ -2,11 +2,10 @@ package k8s
 
 import (
 	"context"
-	"fmt"
-	"time"
+	"errors"
 
 	idlCore "github.com/flyteorg/flyte/flyteidl/gen/pb-go/flyteidl/core"
-	"github.com/flyteorg/flyte/flyteplugins/go/tasks/errors"
+	flyteErr "github.com/flyteorg/flyte/flyteplugins/go/tasks/errors"
 	"github.com/flyteorg/flyte/flyteplugins/go/tasks/logs"
 	"github.com/flyteorg/flyte/flyteplugins/go/tasks/pluginmachinery/core"
 	"github.com/flyteorg/flyte/flyteplugins/go/tasks/pluginmachinery/io"
@@ -131,7 +130,7 @@ func LaunchAndCheckSubTasksState(ctx context.Context, tCtx core.TaskExecutionCon
 	if err != nil {
 		return currentState, externalResources, err
 	} else if taskTemplate == nil {
-		return currentState, externalResources, errors.Errorf(errors.BadTaskSpecification, "Required value not set, taskTemplate is nil")
+		return currentState, externalResources, flyteErr.Errorf(flyteErr.BadTaskSpecification, "Required value not set, taskTemplate is nil")
 	}
 
 	arrayJob, err := arrayCore.ToArrayJob(taskTemplate.GetCustom(), taskTemplate.GetTaskTypeVersion())
@@ -175,14 +174,14 @@ func LaunchAndCheckSubTasksState(ctx context.Context, tCtx core.TaskExecutionCon
 			// attempt to allocateResource
 			allocationStatus, err := allocateResource(ctx, stCtx, config, podName)
 			if err != nil {
-				logger.Errorf(ctx, "Resource manager failed for TaskExecId [%s] token [%s]. error %s",
+				logger.Errorf(ctx, "Resource manager failed for TaskExecId [%v] token [%s]. error %s",
 					stCtx.TaskExecutionMetadata().GetTaskExecutionID().GetID(), podName, err)
 				return currentState, externalResources, err
 			}
 
 			logger.Infof(ctx, "Allocation result for [%s] is [%s]", podName, allocationStatus)
 			if allocationStatus != core.AllocationStatusGranted {
-				phaseInfo = core.PhaseInfoWaitingForResourcesInfo(time.Now(), core.DefaultPhaseVersion, "Exceeded ResourceManager quota", nil)
+				phaseInfo = core.PhaseInfoWaitingForResourcesInfo(core.DefaultPhaseVersion, "Exceeded ResourceManager quota", nil)
 			} else {
 				phaseInfo, perr = launchSubtask(ctx, stCtx, config, kubeClient)
 
@@ -325,8 +324,7 @@ func LaunchAndCheckSubTasksState(ctx context.Context, tCtx core.TaskExecutionCon
 	return newState, externalResources, nil
 }
 
-func TerminateSubTasksOnAbort(ctx context.Context, tCtx core.TaskExecutionContext, kubeClient core.KubeClient, config *Config,
-	terminateFunction func(context.Context, SubTaskExecutionContext, *Config, core.KubeClient) error, currentState *arrayCore.State) error {
+func TerminateSubTasksOnAbort(ctx context.Context, tCtx core.TaskExecutionContext, kubeClient core.KubeClient, terminateFunction func(context.Context, SubTaskExecutionContext, *Config, core.KubeClient) error, currentState *arrayCore.State) error {
 
 	_, externalResources, err := TerminateSubTasks(ctx, tCtx, kubeClient, GetConfig(), terminateFunction, currentState)
 	if err != nil {
@@ -355,7 +353,7 @@ func TerminateSubTasks(ctx context.Context, tCtx core.TaskExecutionContext, kube
 	if err != nil {
 		return currentState, externalResources, err
 	} else if taskTemplate == nil {
-		return currentState, externalResources, errors.Errorf(errors.BadTaskSpecification, "Required value not set, taskTemplate is nil")
+		return currentState, externalResources, flyteErr.Errorf(flyteErr.BadTaskSpecification, "Required value not set, taskTemplate is nil")
 	}
 
 	messageCollector := errorcollector.NewErrorMessageCollector()
@@ -392,7 +390,7 @@ func TerminateSubTasks(ctx context.Context, tCtx core.TaskExecutionContext, kube
 	}
 
 	if messageCollector.Length() > 0 {
-		return currentState, externalResources, fmt.Errorf(messageCollector.Summary(config.MaxErrorStringLength)) //nolint
+		return currentState, externalResources, errors.New(messageCollector.Summary(config.MaxErrorStringLength))
 	}
 
 	return currentState.SetPhase(arrayCore.PhaseWriteToDiscoveryThenFail, currentState.PhaseVersion+1), externalResources, nil

@@ -111,6 +111,19 @@ data:
       name: staging
     - id: production
       name: production
+  otel.yaml: | 
+    otel:
+      file:
+        filename: /tmp/trace.txt
+      jaeger:
+        endpoint: http://localhost:14268/api/traces
+      otlpgrpc:
+        endpoint: http://localhost:4317
+      otlphttp:
+        endpoint: http://localhost:4318/v1/traces
+      sampler:
+        parentSampler: always
+      type: noop
   server.yaml: | 
     auth:
       appAuth:
@@ -134,6 +147,11 @@ data:
           - openid
     flyteadmin:
       eventVersion: 2
+      identityAnnotationKeys:
+      - email
+      - sub
+      identityAnnotationPrefix: flyte.org
+      injectIdentityAnnotations: false
       metadataStoragePrefix:
       - metadata
       - admin
@@ -346,6 +364,19 @@ data:
       passwordPath: /etc/db/pass.txt
       port: 5432
       username: flyteadmin
+  otel.yaml: | 
+    otel:
+      file:
+        filename: /tmp/trace.txt
+      jaeger:
+        endpoint: http://localhost:14268/api/traces
+      otlpgrpc:
+        endpoint: http://localhost:4317
+      otlphttp:
+        endpoint: http://localhost:4318/v1/traces
+      sampler:
+        parentSampler: always
+      type: noop
   server.yaml: | 
     application:
       grpcMaxRecvMsgSizeMBs: 6
@@ -355,7 +386,7 @@ data:
     datacatalog:
       heartbeat-grace-period-multiplier: 3
       max-reservation-heartbeat: 30s
-      metrics-scope: datacatalog
+      metrics-scope: flyte
       profiler-port: 10254
       storage-prefix: metadata/datacatalog
   storage.yaml: | 
@@ -418,24 +449,24 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 rules:
 - apiGroups: 
-  - ""
-  - flyte.lyft.com
-  - rbac.authorization.k8s.io
+    - ""
+    - flyte.lyft.com
+    - rbac.authorization.k8s.io
   resources: 
-  - configmaps
-  - flyteworkflows
-  - namespaces
-  - pods
-  - resourcequotas
-  - roles
-  - rolebindings
-  - secrets
-  - services
-  - serviceaccounts
-  - spark-role
-  - limitranges
+    - configmaps
+    - flyteworkflows
+    - namespaces
+    - pods
+    - resourcequotas
+    - roles
+    - rolebindings
+    - secrets
+    - services
+    - serviceaccounts
+    - spark-role
+    - limitranges
   verbs: 
-  - '*'
+    - '*'
 ---
 # Source: flyte-core/templates/admin/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -467,8 +498,6 @@ metadata:
     app.kubernetes.io/instance: flyte
     helm.sh/chart: flyte-core-v0.1.10
     app.kubernetes.io/managed-by: Helm
-  annotations: 
-    projectcontour.io/upstream-protocol.h2c: grpc
 spec:
   type: ClusterIP
   ports:
@@ -525,19 +554,16 @@ metadata:
     app.kubernetes.io/instance: flyte
     helm.sh/chart: flyte-core-v0.1.10
     app.kubernetes.io/managed-by: Helm
-  annotations: 
-    projectcontour.io/upstream-protocol.h2c: grpc
 spec:
   type: NodePort
   ports:
-  - name: http
-    port: 88
-    protocol: TCP
-    targetPort: 8088
-  - name: grpc
-    port: 89
-    protocol: TCP
-    targetPort: 8089
+    - name: http-metrics
+      protocol: TCP
+      port: 10254
+    - name: grpc
+      port: 89
+      protocol: TCP
+      targetPort: 8089
   selector: 
     app.kubernetes.io/name: datacatalog
     app.kubernetes.io/instance: flyte
@@ -562,7 +588,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "391e8e126d669f751ac1a03de0b45fe7969a0fe58f3dfead9bb7be1b5d951ff"
+        configChecksum: "d89d5aafa467e256f3fe7aec0813cb09ac497b3ec27b89f5b8133cdb93ec930"
       labels: 
         app.kubernetes.io/name: flyteadmin
         app.kubernetes.io/instance: flyte
@@ -583,7 +609,7 @@ spec:
           - /etc/flyte/config/*.yaml
           - migrate
           - run
-          image: "cr.flyte.org/flyteorg/flyteadmin:v1.15.3"
+          image: "cr.flyte.org/flyteorg/flyteadmin:v1.16.8"
           imagePullPolicy: "IfNotPresent"
           name: run-migrations
           securityContext:
@@ -604,7 +630,7 @@ spec:
           - flytesnacks
           - flytetester
           - flyteexamples
-          image: "cr.flyte.org/flyteorg/flyteadmin:v1.15.3"
+          image: "cr.flyte.org/flyteorg/flyteadmin:v1.16.8"
           imagePullPolicy: "IfNotPresent"
           name: seed-projects
           securityContext:
@@ -622,7 +648,7 @@ spec:
           - /etc/flyte/config/*.yaml
           - clusterresource
           - sync
-          image: "cr.flyte.org/flyteorg/flyteadmin:v1.15.3"
+          image: "cr.flyte.org/flyteorg/flyteadmin:v1.16.8"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           securityContext:
@@ -639,7 +665,7 @@ spec:
           - mountPath: /etc/secrets/
             name: admin-secrets
         - name: generate-secrets
-          image: "cr.flyte.org/flyteorg/flyteadmin:v1.15.3"
+          image: "cr.flyte.org/flyteorg/flyteadmin:v1.16.8"
           imagePullPolicy: "IfNotPresent"
           command: ["/bin/sh", "-c"]
           args:
@@ -666,7 +692,7 @@ spec:
         - --config
         - /etc/flyte/config/*.yaml
         - serve
-        image: "cr.flyte.org/flyteorg/flyteadmin:v1.15.3"
+        image: "cr.flyte.org/flyteorg/flyteadmin:v1.16.8"
         imagePullPolicy: "IfNotPresent"
         name: flyteadmin
         ports:
@@ -713,8 +739,10 @@ spec:
         name: shared-data
       - emptyDir: {}
         name: scratch
-      - configMap:
-          name: flyte-admin-base-config
+      - projected:
+          sources:
+            - configMap:
+                name: flyte-admin-base-config
         name: base-config-volume
       - projected:
           sources:
@@ -773,7 +801,7 @@ spec:
             - /etc/flyte/config/*.yaml
             - clusterresource
             - run
-          image: "cr.flyte.org/flyteorg/flyteadmin:v1.15.3"
+          image: "cr.flyte.org/flyteorg/flyteadmin:v1.16.8"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           volumeMounts:
@@ -829,7 +857,7 @@ spec:
         seLinuxOptions:
           type: spc_t
       containers:
-      - image: "472386928882.dkr.ecr.us-west-2.amazonaws.com/exa-labs/flyteconsole:latest"
+      - image: "cr.flyte.org/flyteorg/flyteconsole:v1.21.0"
         imagePullPolicy: "IfNotPresent"
         name: flyteconsole
         envFrom:
@@ -882,7 +910,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "b33f5d90f29b33dc6980bf47d7ac39d9955e0275fec16a356777fa864b90e7f"
+        configChecksum: "1150f42645741b09ff07a85129828e62314df0b4dea984225c9b728a88bf1e2"
       labels: 
         app.kubernetes.io/name: datacatalog
         app.kubernetes.io/instance: flyte
@@ -903,7 +931,7 @@ spec:
         - /etc/datacatalog/config/*.yaml
         - migrate
         - run
-        image: "cr.flyte.org/flyteorg/datacatalog:v1.15.3"
+        image: "cr.flyte.org/flyteorg/datacatalog:v1.16.8"
         imagePullPolicy: "IfNotPresent"
         name: run-migrations
         volumeMounts:
@@ -921,7 +949,7 @@ spec:
         - --config
         - /etc/datacatalog/config/*.yaml
         - serve
-        image: "cr.flyte.org/flyteorg/datacatalog:v1.15.3"
+        image: "cr.flyte.org/flyteorg/datacatalog:v1.16.8"
         imagePullPolicy: "IfNotPresent"
         name: datacatalog
         ports:
@@ -953,8 +981,10 @@ spec:
           secretName: db-pass
       - emptyDir: {}
         name: shared-data
-      - configMap:
-          name: datacatalog-config
+      - projected:
+          sources:
+            - configMap:
+                name: datacatalog-config
         name: config-volume
       affinity: 
         podAntiAffinity:
@@ -984,7 +1014,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "391e8e126d669f751ac1a03de0b45fe7969a0fe58f3dfead9bb7be1b5d951ff"
+        configChecksum: "d89d5aafa467e256f3fe7aec0813cb09ac497b3ec27b89f5b8133cdb93ec930"
       labels: 
         app.kubernetes.io/name: flytescheduler
         app.kubernetes.io/instance: flyte
@@ -1004,7 +1034,7 @@ spec:
         - precheck
         - --config
         - /etc/flyte/config/*.yaml
-        image: "cr.flyte.org/flyteorg/flytescheduler:v1.15.3"
+        image: "cr.flyte.org/flyteorg/flytescheduler:v1.16.8"
         imagePullPolicy: "IfNotPresent"
         name: flytescheduler-check
         securityContext:
@@ -1024,7 +1054,7 @@ spec:
         - run
         - --config
         - /etc/flyte/config/*.yaml
-        image: "cr.flyte.org/flyteorg/flytescheduler:v1.15.3"
+        image: "cr.flyte.org/flyteorg/flytescheduler:v1.16.8"
         imagePullPolicy: "IfNotPresent"
         name: flytescheduler
         ports:

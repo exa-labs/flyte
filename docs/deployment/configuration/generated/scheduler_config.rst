@@ -38,6 +38,8 @@ Flyte Scheduler Configuration
 
 - `plugins <#section-plugins>`_
 
+- `prof <#section-prof>`_
+
 - `propeller <#section-propeller>`_
 
 - `qualityofservice <#section-qualityofservice>`_
@@ -467,7 +469,7 @@ Path (string)
   ""
   
 
-RawPath (string)
+Fragment (string)
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 **Default Value**: 
@@ -475,26 +477,6 @@ RawPath (string)
 .. code-block:: yaml
 
   ""
-  
-
-OmitHost (bool)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  "false"
-  
-
-ForceQuery (bool)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  "false"
   
 
 RawQuery (string)
@@ -507,7 +489,7 @@ RawQuery (string)
   ""
   
 
-Fragment (string)
+RawPath (string)
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 **Default Value**: 
@@ -525,6 +507,26 @@ RawFragment (string)
 .. code-block:: yaml
 
   ""
+  
+
+ForceQuery (bool)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  "false"
+  
+
+OmitHost (bool)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  "false"
   
 
 deviceflow.Config
@@ -1547,6 +1549,23 @@ kafka (`interfaces.KafkaConfig`_)
   version: ""
   
 
+nats (`interfaces.NatsConfig`_)
+------------------------------------------------------------------------------------------------------------------------
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  servers: null
+  tokenAuthentication:
+    enabled: false
+    token: ""
+  userAuthentication:
+    enabled: false
+    password: ""
+    user: ""
+  
+
 eventsPublisher (`interfaces.EventsPublisherConfig`_)
 ------------------------------------------------------------------------------------------------------------------------
 
@@ -1796,6 +1815,98 @@ certPath (string)
   
 
 keyPath (string)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  ""
+  
+
+interfaces.NatsConfig
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+servers ([]string)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  null
+  
+
+userAuthentication (`interfaces.NatsUserPassAuthConfig`_)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  enabled: false
+  password: ""
+  user: ""
+  
+
+tokenAuthentication (`interfaces.NatsTokenAuthConfig`_)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  enabled: false
+  token: ""
+  
+
+interfaces.NatsTokenAuthConfig
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+enabled (bool)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  "false"
+  
+
+token (string)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  ""
+  
+
+interfaces.NatsUserPassAuthConfig
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+enabled (bool)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  "false"
+  
+
+user (string)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  ""
+  
+
+password (string)
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 **Default Value**: 
@@ -2594,6 +2705,36 @@ Use offloaded inputs for workflows.
   "false"
   
 
+injectIdentityAnnotations (bool)
+------------------------------------------------------------------------------------------------------------------------
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  "false"
+  
+
+identityAnnotationPrefix (string)
+------------------------------------------------------------------------------------------------------------------------
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  ""
+  
+
+identityAnnotationKeys ([]string)
+------------------------------------------------------------------------------------------------------------------------
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  null
+  
+
 interfaces.FeatureGates
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -2696,16 +2837,6 @@ template (string)
 .. code-block:: yaml
 
   '{{ project }}-{{ domain }}'
-  
-
-templateData (map[string]interfaces.DataSource)
-------------------------------------------------------------------------------------------------------------------------
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  null
   
 
 Section: notifications
@@ -3262,8 +3393,9 @@ k8s (`config.K8sPluginConfig`_)
     memory: 128Mi
     name: flyte-copilot-
     output-vol-name: flyte-outputs
-    start-timeout: 1m40s
+    start-timeout: 0s
     storage: ""
+    timeout: 1h0m0s
   create-container-config-error-grace-period: 0s
   create-container-error-grace-period: 3m0s
   default-annotations:
@@ -3989,8 +4121,9 @@ Co-Pilot Configuration
   memory: 128Mi
   name: flyte-copilot-
   output-vol-name: flyte-outputs
-  start-timeout: 1m40s
+  start-timeout: 0s
   storage: ""
+  timeout: 1h0m0s
   
 
 delete-resource-on-finalize (bool)
@@ -4311,7 +4444,17 @@ start-timeout (`config.Duration`_)
 
 .. code-block:: yaml
 
-  1m40s
+  0s
+  
+
+timeout (`config.Duration`_)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  1h0m0s
   
 
 cpu (string)
@@ -5187,6 +5330,19 @@ templates ([]tasklog.TemplateLogPlugin)
   null
   
 
+Section: prof
+========================================================================================================================
+
+DisableConfigEndpoint (bool)
+------------------------------------------------------------------------------------------------------------------------
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  "false"
+  
+
 Section: propeller
 ========================================================================================================================
 
@@ -5477,7 +5633,6 @@ config for a workflow node
   default-deadlines:
     node-active-deadline: 0s
     node-execution-deadline: 0s
-    workflow-active-deadline: 0s
   default-max-attempts: 1
   enable-cr-debug-metadata: false
   ignore-retry-cause: false
@@ -5629,6 +5784,7 @@ Configuration for array nodes
 
   default-parallelism-behavior: unlimited
   event-version: 0
+  max-delta-timestamp: 72h0m0s
   max-task-phase-version-attempts: 3
   use-map-plugin-logs: false
   
@@ -5727,6 +5883,18 @@ Override subNode log links with those configured for the map plugin logs
 .. code-block:: yaml
 
   "false"
+  
+
+max-delta-timestamp (`config.Duration`_)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+Maximum delta timestamp between ArrayNode start and an individual subNode start.
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  72h0m0s
   
 
 max-task-phase-version-attempts (int)
@@ -6006,16 +6174,6 @@ Whether output data should be sent by reference when it is too large to be sent 
   "false"
   
 
-ErrorOnAlreadyExists (bool)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  "false"
-  
-
 config.KubeClientConfig
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -6203,7 +6361,6 @@ Default value for timeouts
 
   node-active-deadline: 0s
   node-execution-deadline: 0s
-  workflow-active-deadline: 0s
   
 
 max-node-retries-system-failures (int64)
@@ -6285,18 +6442,6 @@ node-active-deadline (`config.Duration`_)
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 Default value of node timeout that includes the time spent queued.
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  0s
-  
-
-workflow-active-deadline (`config.Duration`_)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-Default value of workflow timeout that includes the time spent queued.
 
 **Default Value**: 
 
@@ -6937,7 +7082,6 @@ security (`config.ServerSecurityOptions`_)
   - flyte-authorization
   allowedOrigins:
   - '*'
-  auditAccess: false
   insecureCookieHeader: false
   secure: false
   ssl:
@@ -6954,25 +7098,10 @@ grpc (`config.GrpcConfig`_)
 .. code-block:: yaml
 
   enableGrpcLatencyMetrics: false
+  maxConcurrentStreams: 0
   maxMessageSizeBytes: 0
   port: 8089
   serverReflection: true
-  
-
-thirdPartyConfig (`config.ThirdPartyConfigOptions`_)
-------------------------------------------------------------------------------------------------------------------------
-
-Deprecated please use auth.appAuth.thirdPartyConfig instead.
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  flyteClient:
-    audience: ""
-    clientId: ""
-    redirectUri: ""
-    scopes: []
   
 
 dataProxy (`config.DataProxyConfig`_)
@@ -6989,7 +7118,6 @@ Defines data proxy configuration.
   upload:
     defaultFileNameLength: 20
     maxExpiresIn: 1h0m0s
-    maxSize: 6Mi
     storagePrefix: ""
   
 
@@ -7019,6 +7147,18 @@ Configuration to control the Kubernetes client
   timeout: 30s
   
 
+gracefulShutdownTimeoutSeconds (int)
+------------------------------------------------------------------------------------------------------------------------
+
+Number of seconds to wait for graceful shutdown before forcefully terminating the server
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  "10"
+  
+
 config.DataProxyConfig
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -7033,7 +7173,6 @@ Defines data proxy upload configuration.
 
   defaultFileNameLength: 20
   maxExpiresIn: 1h0m0s
-  maxSize: 6Mi
   storagePrefix: ""
   
 
@@ -7066,18 +7205,6 @@ Maximum allowed expiration duration.
 
 config.DataProxyUploadConfig
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-maxSize (`resource.Quantity`_)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-Maximum allowed upload size.
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  6Mi
-  
 
 maxExpiresIn (`config.Duration`_)
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
@@ -7166,6 +7293,18 @@ Enable grpc latency metrics. Note Histograms metrics can be expensive on Prometh
   "false"
   
 
+maxConcurrentStreams (int)
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+Limit on the number of concurrent streams to each ServerTransport.
+
+**Default Value**: 
+
+.. code-block:: yaml
+
+  "0"
+  
+
 config.KubeClientConfig (kubeClientConfig)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -7240,16 +7379,6 @@ useAuth (bool)
   
 
 insecureCookieHeader (bool)
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-
-**Default Value**: 
-
-.. code-block:: yaml
-
-  "false"
-  
-
-auditAccess (bool)
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 **Default Value**: 

@@ -49,11 +49,11 @@ func ExtractCurrentCondition(jobConditions []kubeflowv1.JobCondition) (kubeflowv
 func GetPhaseInfo(currentCondition kubeflowv1.JobCondition, occurredAt time.Time,
 	taskPhaseInfo pluginsCore.TaskInfo) (pluginsCore.PhaseInfo, error) {
 	if len(currentCondition.Type) == 0 {
-		return pluginsCore.PhaseInfoQueuedWithTaskInfo(occurredAt, pluginsCore.DefaultPhaseVersion, "JobCreated", &taskPhaseInfo), nil
+		return pluginsCore.PhaseInfoQueuedWithTaskInfo(pluginsCore.DefaultPhaseVersion, "JobCreated", &taskPhaseInfo), nil
 	}
 	switch currentCondition.Type {
 	case kubeflowv1.JobCreated:
-		return pluginsCore.PhaseInfoQueuedWithTaskInfo(occurredAt, pluginsCore.DefaultPhaseVersion, "JobCreated", &taskPhaseInfo), nil
+		return pluginsCore.PhaseInfoQueuedWithTaskInfo(pluginsCore.DefaultPhaseVersion, "JobCreated", &taskPhaseInfo), nil
 	case kubeflowv1.JobRunning:
 		return pluginsCore.PhaseInfoRunning(pluginsCore.DefaultPhaseVersion, &taskPhaseInfo), nil
 	case kubeflowv1.JobSucceeded:
@@ -63,6 +63,8 @@ func GetPhaseInfo(currentCondition kubeflowv1.JobCondition, occurredAt time.Time
 		return pluginsCore.PhaseInfoRetryableFailure(flyteerr.DownstreamSystemError, details, &taskPhaseInfo), nil
 	case kubeflowv1.JobRestarting:
 		return pluginsCore.PhaseInfoRunning(pluginsCore.DefaultPhaseVersion, &taskPhaseInfo), nil
+	case kubeflowv1.JobSuspended:
+		return pluginsCore.PhaseInfoQueuedWithTaskInfo(pluginsCore.DefaultPhaseVersion, "Suspended", &taskPhaseInfo), nil
 	}
 
 	return pluginsCore.PhaseInfoUndefined, nil
@@ -73,7 +75,7 @@ func GetMPIPhaseInfo(currentCondition kubeflowv1.JobCondition, occurredAt time.T
 	taskPhaseInfo pluginsCore.TaskInfo) (pluginsCore.PhaseInfo, error) {
 	switch currentCondition.Type {
 	case kubeflowv1.JobCreated:
-		return pluginsCore.PhaseInfoQueuedWithTaskInfo(occurredAt, pluginsCore.DefaultPhaseVersion, "New job name submitted to MPI operator", &taskPhaseInfo), nil
+		return pluginsCore.PhaseInfoQueuedWithTaskInfo(pluginsCore.DefaultPhaseVersion, "New job name submitted to MPI operator", &taskPhaseInfo), nil
 	case kubeflowv1.JobRunning:
 		return pluginsCore.PhaseInfoRunning(pluginsCore.DefaultPhaseVersion, &taskPhaseInfo), nil
 	case kubeflowv1.JobSucceeded:
@@ -83,6 +85,8 @@ func GetMPIPhaseInfo(currentCondition kubeflowv1.JobCondition, occurredAt time.T
 		return pluginsCore.PhaseInfoRetryableFailure(flyteerr.DownstreamSystemError, details, &taskPhaseInfo), nil
 	case kubeflowv1.JobRestarting:
 		return pluginsCore.PhaseInfoRunning(pluginsCore.DefaultPhaseVersion, &taskPhaseInfo), nil
+	case kubeflowv1.JobSuspended:
+		return pluginsCore.PhaseInfoQueuedWithTaskInfo(pluginsCore.DefaultPhaseVersion, "Suspended", &taskPhaseInfo), nil
 	}
 
 	return pluginsCore.PhaseInfoUndefined, nil
@@ -90,7 +94,7 @@ func GetMPIPhaseInfo(currentCondition kubeflowv1.JobCondition, occurredAt time.T
 
 // GetLogs will return the logs for kubeflow job
 func GetLogs(pluginContext k8s.PluginContext, taskType string, objectMeta meta_v1.ObjectMeta, taskTemplate *core.TaskTemplate, hasMaster bool,
-	workersCount int32, psReplicasCount int32, chiefReplicasCount int32, evaluatorReplicasCount int32) ([]*core.TaskLog, error) {
+	workersCount int32, psReplicasCount int32, chiefReplicasCount int32, evaluatorReplicasCount int32, primaryContainerName string) ([]*core.TaskLog, error) {
 	name := objectMeta.Name
 	namespace := objectMeta.Namespace
 
@@ -126,6 +130,7 @@ func GetLogs(pluginContext k8s.PluginContext, taskType string, objectMeta meta_v
 				PodUnixFinishTime:    finishTime,
 				TaskExecutionID:      taskExecID,
 				TaskTemplate:         taskTemplate,
+				ContainerName:        primaryContainerName,
 			},
 		)
 		if masterErr != nil {
@@ -145,6 +150,7 @@ func GetLogs(pluginContext k8s.PluginContext, taskType string, objectMeta meta_v
 			PodUnixFinishTime:    finishTime,
 			TaskExecutionID:      taskExecID,
 			TaskTemplate:         taskTemplate,
+			ContainerName:        primaryContainerName,
 		})
 		if err != nil {
 			return nil, err
@@ -328,7 +334,7 @@ func ToReplicaSpecWithOverrides(ctx context.Context, taskCtx pluginsCore.TaskExe
 	}
 
 	taskCtxOptions := []flytek8s.PluginTaskExecutionContextOption{}
-	if resources != nil {
+	if resources != nil && (len(resources.GetLimits()) > 0 || len(resources.GetRequests()) > 0) {
 		resources, err := flytek8s.ToK8sResourceRequirements(resources)
 		if err != nil {
 			return nil, flyteerr.Errorf(flyteerr.BadTaskSpecification, "invalid TaskSpecification on Resources [%v], Err: [%v]", resources, err.Error())

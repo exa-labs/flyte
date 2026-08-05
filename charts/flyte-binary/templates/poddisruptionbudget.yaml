@@ -1,0 +1,15 @@
+{{- if gt (int .Values.replicaCount) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "flyte-binary.fullname" . }}-pdb
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- include "flyte-binary.labels" . | nindent 4 }}
+    {{- if .Values.commonLabels }}
+    {{- tpl ( .Values.commonLabels | toYaml ) . | nindent 4 }}
+    {{- end }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: {{- include "flyte-binary.selectorLabels" . | nindent 6 }}
+{{- end }}
