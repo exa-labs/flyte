@@ -296,6 +296,9 @@ type LeaderElectionConfig struct {
 	// Enable or disable leader election.
 	Enabled bool `json:"enabled" pflag:",Enables/Disables leader election."`
 
+	// ReleaseOnCancel releases the leader lease when the controller context is canceled.
+	ReleaseOnCancel bool `json:"release-on-cancel" pflag:",Release the leader lease when the controller context is canceled."`
+
 	// Determines the name of the configmap that leader election will use for holding the leader lock.
 	LockConfigMap types.NamespacedName `json:"lock-config-map" pflag:",ConfigMap namespace/name to use for resource lock."`
 

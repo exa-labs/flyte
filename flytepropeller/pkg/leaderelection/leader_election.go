@@ -68,10 +68,11 @@ func getUniqueLeaderID() string {
 func NewLeaderElector(lock resourcelock.Interface, cfg config.LeaderElectionConfig,
 	leaderFn func(ctx context.Context), leaderStoppedFn func()) (*leaderelection.LeaderElector, error) {
 	return leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
-		Lock:          lock,
-		LeaseDuration: cfg.LeaseDuration.Duration,
-		RenewDeadline: cfg.RenewDeadline.Duration,
-		RetryPeriod:   cfg.RetryPeriod.Duration,
+		Lock:            lock,
+		LeaseDuration:   cfg.LeaseDuration.Duration,
+		RenewDeadline:   cfg.RenewDeadline.Duration,
+		RetryPeriod:     cfg.RetryPeriod.Duration,
+		ReleaseOnCancel: cfg.ReleaseOnCancel,
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: leaderFn,
 			OnStoppedLeading: leaderStoppedFn,

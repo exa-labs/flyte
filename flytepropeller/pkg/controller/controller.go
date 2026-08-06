@@ -372,6 +372,10 @@ func New(ctx context.Context, cfg *config.Config, kubeClientset kubernetes.Inter
 	if lock != nil {
 		logger.Infof(ctx, "Creating leader elector for the controller.")
 		controller.leaderElector, err = leader.NewLeaderElector(lock, cfg.LeaderElection, controller.onStartedLeading, func() {
+			if ctx.Err() != nil {
+				logger.Infof(ctx, "Stopped leading during shutdown.")
+				return
+			}
 			logger.Fatal(ctx, "Lost leader state. Shutting down.")
 		})
 

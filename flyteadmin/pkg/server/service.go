@@ -437,10 +437,9 @@ func serveGatewayInsecure(ctx context.Context, pluginRegistry *plugins.Registry,
 		}
 	}()
 
-	// Gracefully shut down the servers
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	// Gracefully shut down the servers. A cancellable context is used by the
+	// single-binary entrypoint so it can order Propeller shutdown before Admin.
+	waitForShutdown(ctx)
 
 	// Forced shutdown because of timeout
 	logger.Infof(ctx, "Shutting down server... timeout: %d seconds", cfg.GracefulShutdownTimeoutSeconds)
@@ -455,9 +454,12 @@ func serveGatewayInsecure(ctx context.Context, pluginRegistry *plugins.Registry,
 	var wg sync.WaitGroup
 	wg.Add(2)
 
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.GracefulShutdownTimeoutSeconds)*time.Second)
+	defer cancel()
+
 	go func() {
 		defer wg.Done()
-		if err := server.Shutdown(ctx); err != nil {
+		if err := server.Shutdown(shutdownCtx); err != nil {
 			logger.Errorf(ctx, "Failed to gracefully shutdown HTTP server: %v", err)
 		}
 	}()
@@ -583,10 +585,9 @@ func serveGatewaySecure(ctx context.Context, pluginRegistry *plugins.Registry, c
 		}
 	}()
 
-	// Gracefully shutdown the servers
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	// Gracefully shut down the servers. A cancellable context is used by the
+	// single-binary entrypoint so it can order Propeller shutdown before Admin.
+	waitForShutdown(ctx)
 
 	// Create a context with timeout for the shutdown process
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.GracefulShutdownTimeoutSeconds)*time.Second)
@@ -598,4 +599,16 @@ func serveGatewaySecure(ctx context.Context, pluginRegistry *plugins.Registry, c
 
 	logger.Infof(ctx, "Servers gracefully stopped")
 	return nil
+}
+
+func waitForShutdown(ctx context.Context) {
+	if ctx.Done() != nil {
+		<-ctx.Done()
+		return
+	}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	<-sigCh
 }
