@@ -77,7 +77,7 @@ jobs:
           fi
 
           rm -rf .cr-index .cr-release-packages
-          mkdir -p .cr-release-packages
+          mkdir -p .cr-index .cr-release-packages
 
           while IFS=$'\t' read -r tag asset; do
             gh release download "$tag" \
