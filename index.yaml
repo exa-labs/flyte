@@ -36,6 +36,22 @@ entries:
   flyte-binary:
   - apiVersion: v2
     appVersion: 1.16.0
+    created: "2026-08-06T12:18:27.485198554Z"
+    dependencies:
+    - alias: flyteconnector
+      condition: flyteconnector.enabled
+      name: flyteconnector
+      repository: file://../flyteconnector
+      version: v0.1.10
+    description: Chart for basic single Flyte executable deployment
+    digest: d7623af088b2055567d25bff44a30e9bfd6bc0ddc21c1a2a53e741f45e32a200
+    name: flyte-binary
+    type: application
+    urls:
+    - https://github.com/exa-labs/flyte/releases/download/flyte-binary-v0.1.11/flyte-binary-v0.1.11.tgz
+    version: v0.1.11
+  - apiVersion: v2
+    appVersion: 1.16.0
     created: "2025-04-23T16:04:43.154497771Z"
     dependencies:
     - alias: flyteconnector
@@ -137,4 +153,4 @@ entries:
     urls:
     - https://github.com/exa-labs/flyte/releases/download/flyteconnector-v0.1.10/flyteconnector-v0.1.10.tgz
     version: v0.1.10
-generated: "2025-04-23T16:04:43.879562721Z"
+generated: "2026-08-06T12:18:28.62246168Z"
