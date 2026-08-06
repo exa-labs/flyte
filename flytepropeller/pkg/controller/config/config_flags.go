@@ -79,6 +79,7 @@ func (cfg Config) GetPFlagSet(prefix string) *pflag.FlagSet {
 	cmdFlags.Int(fmt.Sprintf("%v%v", prefix, "max-ttl-hours"), defaultConfig.MaxTTLInHours, "")
 	cmdFlags.String(fmt.Sprintf("%v%v", prefix, "gc-interval"), defaultConfig.GCInterval.String(), "")
 	cmdFlags.Bool(fmt.Sprintf("%v%v", prefix, "leader-election.enabled"), defaultConfig.LeaderElection.Enabled, "Enables/Disables leader election.")
+	cmdFlags.Bool(fmt.Sprintf("%v%v", prefix, "leader-election.release-on-cancel"), defaultConfig.LeaderElection.ReleaseOnCancel, "Release the leader lease when the controller context is canceled.")
 	cmdFlags.String(fmt.Sprintf("%v%v", prefix, "leader-election.lock-config-map.Namespace"), defaultConfig.LeaderElection.LockConfigMap.Namespace, "")
 	cmdFlags.String(fmt.Sprintf("%v%v", prefix, "leader-election.lock-config-map.Name"), defaultConfig.LeaderElection.LockConfigMap.Name, "")
 	cmdFlags.String(fmt.Sprintf("%v%v", prefix, "leader-election.lease-duration"), defaultConfig.LeaderElection.LeaseDuration.String(), "Duration that non-leader candidates will wait to force acquire leadership. This is measured against time of last observed ack.")

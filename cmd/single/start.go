@@ -4,6 +4,9 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	ctrlWebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -44,6 +47,7 @@ import (
 
 const defaultNamespace = "all"
 const propellerDefaultNamespace = "flyte"
+const propellerShutdownTimeout = 5 * time.Second
 
 func startDataCatalog(ctx context.Context, _ DataCatalog) error {
 	if err := datacatalogRepo.Migrate(ctx); err != nil {
@@ -105,6 +109,7 @@ func startAdmin(ctx context.Context, cfg Admin) error {
 
 func startPropeller(ctx context.Context, cfg Propeller) error {
 	propellerCfg := propellerConfig.GetConfig()
+	propellerCfg.LeaderElection.ReleaseOnCancel = true
 	propellerScope := promutils.NewScope(propellerConfig.GetConfig().MetricsPrefix).NewSubScope("propeller").NewSubScope(propellerCfg.LimitNamespace)
 	limitNamespace := ""
 	var namespaceConfigs map[string]cache.Config
@@ -192,9 +197,9 @@ var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "This command will start Flyte cluster locally",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := context.Background()
-		g, childCtx := errgroup.WithContext(ctx)
 		cfg := GetConfig()
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
 
 		for _, serviceName := range []string{otelutils.AdminClientTracer, otelutils.AdminGormTracer, otelutils.AdminServerTracer,
 			otelutils.BlobstoreClientTracer, otelutils.DataCatalogClientTracer, otelutils.DataCatalogGormTracer,
@@ -205,41 +210,97 @@ var startCmd = &cobra.Command{
 			}
 		}
 
-		if !cfg.Admin.Disabled {
-			g.Go(func() error {
-				err := startAdmin(childCtx, cfg.Admin)
-				if err != nil {
-					logger.Panicf(childCtx, "Failed to start Admin, err: %v", err)
-					return err
-				}
-				return nil
-			})
-		}
-
-		if !cfg.Propeller.Disabled {
-			g.Go(func() error {
-				err := startPropeller(childCtx, cfg.Propeller)
-				if err != nil {
-					logger.Panicf(childCtx, "Failed to start Propeller, err: %v", err)
-					return err
-				}
-				return nil
-			})
-		}
-
-		if !cfg.DataCatalog.Disabled {
-			g.Go(func() error {
-				err := startDataCatalog(childCtx, cfg.DataCatalog)
-				if err != nil {
-					logger.Panicf(childCtx, "Failed to start Datacatalog, err: %v", err)
-					return err
-				}
-				return nil
-			})
-		}
-
-		return g.Wait()
+		return runServices(ctx, cfg)
 	},
+}
+
+func runServices(ctx context.Context, cfg *Config) error {
+	serviceCtx := context.Background()
+	adminCtx, cancelAdmin := context.WithCancel(serviceCtx)
+	propellerCtx, cancelPropeller := context.WithCancel(serviceCtx)
+	dataCatalogCtx, cancelDataCatalog := context.WithCancel(serviceCtx)
+	defer cancelAdmin()
+	defer cancelPropeller()
+	defer cancelDataCatalog()
+
+	type serviceResult struct {
+		name string
+		err  error
+	}
+	results := make(chan serviceResult, 3)
+	propellerDone := make(chan error, 1)
+	start := func(name string, fn func(context.Context) error, serviceContext context.Context) {
+		go func() {
+			err := fn(serviceContext)
+			results <- serviceResult{name: name, err: err}
+			if name == "Propeller" {
+				propellerDone <- err
+			}
+		}()
+	}
+
+	if !cfg.Admin.Disabled {
+		start("Admin", func(serviceContext context.Context) error {
+			return startAdmin(serviceContext, cfg.Admin)
+		}, adminCtx)
+	}
+	if !cfg.Propeller.Disabled {
+		start("Propeller", func(serviceContext context.Context) error {
+			return startPropeller(serviceContext, cfg.Propeller)
+		}, propellerCtx)
+	}
+	if !cfg.DataCatalog.Disabled {
+		start("DataCatalog", func(serviceContext context.Context) error {
+			return startDataCatalog(serviceContext, cfg.DataCatalog)
+		}, dataCatalogCtx)
+	}
+
+	services := 0
+	if !cfg.Admin.Disabled {
+		services++
+	}
+	if !cfg.Propeller.Disabled {
+		services++
+	}
+	if !cfg.DataCatalog.Disabled {
+		services++
+	}
+
+	for services > 0 {
+		select {
+		case <-ctx.Done():
+			logger.Infof(ctx, "Shutdown requested. Stopping Propeller before Admin.")
+			if !cfg.Propeller.Disabled {
+				cancelPropeller()
+				select {
+				case err := <-propellerDone:
+					if err != nil {
+						logger.Infof(ctx, "Propeller exited during shutdown: %v", err)
+					}
+				case <-time.After(propellerShutdownTimeout):
+					logger.Warnf(ctx, "Propeller did not stop within %s. Continuing with Admin shutdown.", propellerShutdownTimeout)
+				}
+			}
+
+			cancelAdmin()
+			cancelDataCatalog()
+
+			for services > 0 {
+				<-results
+				services--
+			}
+			return nil
+		case result := <-results:
+			services--
+			if result.err != nil && ctx.Err() == nil {
+				cancelPropeller()
+				cancelAdmin()
+				cancelDataCatalog()
+				return result.err
+			}
+		}
+	}
+	return nil
 }
 
 func init() {
