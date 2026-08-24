@@ -505,6 +505,20 @@ func TestConfig_SetFlags(t *testing.T) {
 			}
 		})
 	})
+	t.Run("Test_leader-election.release-on-cancel", func(t *testing.T) {
+
+		t.Run("Override", func(t *testing.T) {
+			testValue := "1"
+
+			cmdFlags.Set("leader-election.release-on-cancel", testValue)
+			if vBool, err := cmdFlags.GetBool("leader-election.release-on-cancel"); err == nil {
+				testDecodeJson_Config(t, fmt.Sprintf("%v", vBool), &actual.LeaderElection.ReleaseOnCancel)
+
+			} else {
+				assert.FailNow(t, err.Error())
+			}
+		})
+	})
 	t.Run("Test_leader-election.lock-config-map.Namespace", func(t *testing.T) {
 
 		t.Run("Override", func(t *testing.T) {
