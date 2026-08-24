@@ -63,11 +63,15 @@ func TestMetricsScope(t *testing.T) {
 		assert.Equal(t, `Desc{fqName: "test:xc", help: "some x", constLabels: {}, variableLabels: {}}`, m.Desc().String())
 		mv := s.MustNewCounterVec("xcv", description)
 		assert.NotNil(t, mv)
+		// Re-registering an identical counter reuses the existing collector.
+		assert.Equal(t, m, s.MustNewCounter("xc", description))
+		assert.Equal(t, mv, s.MustNewCounterVec("xcv", description))
+		// A conflicting registration (same name, different help) still panics.
 		assert.Panics(t, func() {
-			_ = s.MustNewCounter("xc", description)
+			_ = s.MustNewCounter("xc", "different description")
 		})
 		assert.Panics(t, func() {
-			_ = s.MustNewCounterVec("xcv", description)
+			_ = s.MustNewCounterVec("xcv", "different description")
 		})
 	})
 
