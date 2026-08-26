@@ -1,6 +1,6 @@
 # flyte-binary
 
-![Version: v0.1.11](https://img.shields.io/badge/Version-v0.1.11-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.16.0](https://img.shields.io/badge/AppVersion-1.16.0-informational?style=flat-square)
+![Version: v0.1.12](https://img.shields.io/badge/Version-v0.1.12-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.16.0](https://img.shields.io/badge/AppVersion-1.16.0-informational?style=flat-square)
 
 Chart for basic single Flyte executable deployment
 
@@ -191,4 +191,5 @@ Chart for basic single Flyte executable deployment
 | strategy.rollingUpdate.maxSurge | int | `1` |  |
 | strategy.rollingUpdate.maxUnavailable | int | `0` |  |
 | strategy.type | string | `"Recreate"` |  |
+| webhook.serveFromSecret | bool | `false` |  |
 
