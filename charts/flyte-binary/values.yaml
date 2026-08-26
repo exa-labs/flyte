@@ -43,6 +43,17 @@ ha:
               matchLabels:
                 app.kubernetes.io/name: flyte-binary
 
+# webhook Configuration for the flyte pod webhook TLS certificates
+webhook:
+  # serveFromSecret Serve the webhook TLS certificate from the shared webhook
+  # Secret instead of certs generated locally by each pod. Required whenever
+  # replicaCount > 1: with locally generated certs every replica mints its own
+  # CA and force-updates the shared MutatingWebhookConfiguration caBundle, so
+  # admission requests routed to any other replica fail TLS verification.
+  # On a fresh install the first pod creates the Secret and may restart once
+  # while the kubelet projects it into the volume.
+  serveFromSecret: false
+
 # flyte-core-components: Configuration of flyte's core components
 flyte-core-components:
   # admin Configuration to disable FlyteAdmin or any of its components
