@@ -28,6 +28,18 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+func TestOperatorNeverReconciled(t *testing.T) {
+	now := meta_v1.Now()
+	created := kubeflowv1.JobCondition{Type: kubeflowv1.JobCreated, Status: corev1.ConditionTrue}
+
+	assert.True(t, OperatorNeverReconciled(kubeflowv1.JobStatus{}))
+	assert.True(t, OperatorNeverReconciled(kubeflowv1.JobStatus{Conditions: []kubeflowv1.JobCondition{created}}))
+	assert.False(t, OperatorNeverReconciled(kubeflowv1.JobStatus{StartTime: &now}))
+	// Gang-scheduled job waiting for PodGroup admission: pods (and StartTime) are withheld, only LastReconcileTime lands.
+	assert.False(t, OperatorNeverReconciled(kubeflowv1.JobStatus{LastReconcileTime: &now}))
+	assert.False(t, OperatorNeverReconciled(kubeflowv1.JobStatus{StartTime: &now, LastReconcileTime: &now}))
+}
+
 func TestExtractCurrentCondition(t *testing.T) {
 	jobCreated := kubeflowv1.JobCondition{
 		Type:   kubeflowv1.JobCreated,
