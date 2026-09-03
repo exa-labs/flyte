@@ -1,6 +1,7 @@
 package promutils
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -399,7 +400,19 @@ func (m metricsScope) NewCounter(name, description string) (prometheus.Counter, 
 			Help: description,
 		},
 	)
-	return c, prometheus.Register(c)
+	if err := prometheus.Register(c); err != nil {
+		// Counters are registered dynamically (e.g. per plugin/task-type in
+		// propeller's task handler); if an identical counter already exists,
+		// reuse it instead of failing so callers don't panic on re-registration.
+		are := prometheus.AlreadyRegisteredError{}
+		if errors.As(err, &are) {
+			if existing, ok := are.ExistingCollector.(prometheus.Counter); ok {
+				return existing, nil
+			}
+		}
+		return c, err
+	}
+	return c, nil
 }
 
 func (m metricsScope) MustNewCounter(name, description string) prometheus.Counter {
@@ -416,7 +429,18 @@ func (m metricsScope) NewCounterVec(name, description string, labelNames ...stri
 		},
 		labelNames,
 	)
-	return c, prometheus.Register(c)
+	if err := prometheus.Register(c); err != nil {
+		// See NewCounter: reuse an identical existing collector rather than
+		// failing, so dynamic re-registration doesn't panic via MustNewCounterVec.
+		are := prometheus.AlreadyRegisteredError{}
+		if errors.As(err, &are) {
+			if existing, ok := are.ExistingCollector.(*prometheus.CounterVec); ok {
+				return existing, nil
+			}
+		}
+		return c, err
+	}
+	return c, nil
 }
 
 func (m metricsScope) MustNewCounterVec(name, description string, labelNames ...string) *prometheus.CounterVec {
