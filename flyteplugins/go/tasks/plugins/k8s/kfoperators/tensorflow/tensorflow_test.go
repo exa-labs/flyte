@@ -639,6 +639,16 @@ func TestGetTaskPhase(t *testing.T) {
 	assert.Contains(t, err.Error(), "kubeflow operator hasn't updated")
 	assert.Equal(t, pluginsCore.PhaseInfoUndefined, taskPhase)
 
+	// Training operator reconciled the job but is holding pod creation until the gang's PodGroup is
+	// admitted: StartTime stays nil past the timeout while LastReconcileTime proves the operator is alive
+	tfJobGangWait := dummyTensorFlowJobResourceCreator(kubeflowv1.JobCreated)
+	tfJobGangWait.CreationTimestamp = v1.Time{Time: time.Now().Add(-time.Hour)}
+	tfJobGangWait.Status.StartTime = nil
+	tfJobGangWait.Status.LastReconcileTime = &v1.Time{Time: time.Now().Add(-time.Minute)}
+	taskPhase, err = tensorflowResourceHandler.GetTaskPhase(ctx, taskCtx, tfJobGangWait)
+	assert.NoError(t, err)
+	assert.Equal(t, pluginsCore.PhaseQueued, taskPhase.Phase())
+
 	// Training operator did not modify the job because it is suspended
 	tfJobSuspended := dummyTensorFlowJobResourceCreator(kubeflowv1.JobCreated)
 	tfJobSuspended.CreationTimestamp = v1.Time{Time: time.Now().Add(-time.Hour)}
