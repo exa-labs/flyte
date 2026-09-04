@@ -22,6 +22,7 @@ type CookieManager struct {
 	blockKey       []byte
 	domain         string
 	sameSitePolicy config.SameSite
+	maxAge         time.Duration
 }
 
 const (
@@ -50,6 +51,7 @@ func NewCookieManager(ctx context.Context, hashKeyEncoded, blockKeyEncoded strin
 		blockKey:       blockKey,
 		domain:         cookieSettings.Domain,
 		sameSitePolicy: cookieSettings.SameSitePolicy,
+		maxAge:         cookieSettings.MaxAge.Duration,
 	}, nil
 }
 
@@ -105,7 +107,7 @@ func (c CookieManager) SetUserInfoCookie(ctx context.Context, writer http.Respon
 		return fmt.Errorf("failed to marshal user info to store in a cookie. Error: %w", err)
 	}
 
-	userInfoCookie, err := NewSecureCookie(userInfoCookieName, string(raw), c.hashKey, c.blockKey, c.domain, c.getHTTPSameSitePolicy())
+	userInfoCookie, err := NewSecureCookie(userInfoCookieName, string(raw), c.hashKey, c.blockKey, c.domain, c.getHTTPSameSitePolicy(), c.maxAge)
 	if err != nil {
 		logger.Errorf(ctx, "Error generating encrypted user info cookie %s", err)
 		return err
@@ -143,7 +145,7 @@ func (c CookieManager) RetrieveAuthCodeRequest(ctx context.Context, request *htt
 }
 
 func (c CookieManager) SetAuthCodeCookie(ctx context.Context, writer http.ResponseWriter, authRequestURL string) error {
-	authCodeCookie, err := NewSecureCookie(authCodeCookieName, authRequestURL, c.hashKey, c.blockKey, c.domain, c.getHTTPSameSitePolicy())
+	authCodeCookie, err := NewSecureCookie(authCodeCookieName, authRequestURL, c.hashKey, c.blockKey, c.domain, c.getHTTPSameSitePolicy(), c.maxAge)
 	if err != nil {
 		logger.Errorf(ctx, "Error generating encrypted accesstoken cookie %s", err)
 		return err
@@ -158,13 +160,13 @@ func (c CookieManager) StoreAccessToken(ctx context.Context, accessToken string,
 	midpoint := len(accessToken) / 2
 	firstHalf := accessToken[:midpoint]
 	secondHalf := accessToken[midpoint:]
-	atCookieFirst, err := NewSecureCookie(accessTokenCookieNameSplitFirst, firstHalf, c.hashKey, c.blockKey, c.domain, c.getHTTPSameSitePolicy())
+	atCookieFirst, err := NewSecureCookie(accessTokenCookieNameSplitFirst, firstHalf, c.hashKey, c.blockKey, c.domain, c.getHTTPSameSitePolicy(), c.maxAge)
 	if err != nil {
 		logger.Errorf(ctx, "Error generating encrypted accesstoken cookie first half %s", err)
 		return err
 	}
 	http.SetCookie(writer, &atCookieFirst)
-	atCookieSecond, err := NewSecureCookie(accessTokenCookieNameSplitSecond, secondHalf, c.hashKey, c.blockKey, c.domain, c.getHTTPSameSitePolicy())
+	atCookieSecond, err := NewSecureCookie(accessTokenCookieNameSplitSecond, secondHalf, c.hashKey, c.blockKey, c.domain, c.getHTTPSameSitePolicy(), c.maxAge)
 	if err != nil {
 		logger.Errorf(ctx, "Error generating encrypted accesstoken cookie second half %s", err)
 		return err
@@ -187,7 +189,7 @@ func (c CookieManager) SetTokenCookies(ctx context.Context, writer http.Response
 	}
 
 	if idTokenRaw, converted := token.Extra(idTokenExtra).(string); converted {
-		idCookie, err := NewSecureCookie(idTokenCookieName, idTokenRaw, c.hashKey, c.blockKey, c.domain, c.getHTTPSameSitePolicy())
+		idCookie, err := NewSecureCookie(idTokenCookieName, idTokenRaw, c.hashKey, c.blockKey, c.domain, c.getHTTPSameSitePolicy(), c.maxAge)
 		if err != nil {
 			logger.Errorf(ctx, "Error generating encrypted id token cookie %s", err)
 			return err
@@ -201,7 +203,7 @@ func (c CookieManager) SetTokenCookies(ctx context.Context, writer http.Response
 
 	// Set the refresh cookie if there is a refresh token
 	if token.RefreshToken != "" {
-		refreshCookie, err := NewSecureCookie(refreshTokenCookieName, token.RefreshToken, c.hashKey, c.blockKey, c.domain, c.getHTTPSameSitePolicy())
+		refreshCookie, err := NewSecureCookie(refreshTokenCookieName, token.RefreshToken, c.hashKey, c.blockKey, c.domain, c.getHTTPSameSitePolicy(), c.maxAge)
 		if err != nil {
 			logger.Errorf(ctx, "Error generating encrypted refresh token cookie %s", err)
 			return err
