@@ -28,16 +28,32 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func TestOperatorNeverReconciled(t *testing.T) {
-	now := meta_v1.Now()
+func TestOperatorStale(t *testing.T) {
+	now := time.Now()
+	timeout := time.Minute
+	ts := func(ago time.Duration) *meta_v1.Time { return &meta_v1.Time{Time: now.Add(-ago)} }
 	created := kubeflowv1.JobCondition{Type: kubeflowv1.JobCreated, Status: corev1.ConditionTrue}
 
-	assert.True(t, OperatorNeverReconciled(kubeflowv1.JobStatus{}))
-	assert.True(t, OperatorNeverReconciled(kubeflowv1.JobStatus{Conditions: []kubeflowv1.JobCondition{created}}))
-	assert.False(t, OperatorNeverReconciled(kubeflowv1.JobStatus{StartTime: &now}))
-	// Gang-scheduled job waiting for PodGroup admission: pods (and StartTime) are withheld, only LastReconcileTime lands.
-	assert.False(t, OperatorNeverReconciled(kubeflowv1.JobStatus{LastReconcileTime: &now}))
-	assert.False(t, OperatorNeverReconciled(kubeflowv1.JobStatus{StartTime: &now, LastReconcileTime: &now}))
+	// Never touched by the operator: stale only once the timeout has elapsed since creation.
+	assert.False(t, OperatorStale(*ts(time.Second), kubeflowv1.JobStatus{}, timeout, now))
+	assert.True(t, OperatorStale(*ts(time.Hour), kubeflowv1.JobStatus{}, timeout, now))
+	assert.True(t, OperatorStale(*ts(time.Hour), kubeflowv1.JobStatus{Conditions: []kubeflowv1.JobCondition{created}}, timeout, now))
+
+	// StartTime means pods exist; the operator's liveness no longer matters for this check.
+	assert.False(t, OperatorStale(*ts(time.Hour), kubeflowv1.JobStatus{StartTime: ts(time.Hour)}, timeout, now))
+	assert.False(t, OperatorStale(*ts(time.Hour), kubeflowv1.JobStatus{StartTime: ts(time.Hour), LastReconcileTime: ts(time.Hour)}, timeout, now))
+
+	// Gang-scheduled job waiting for PodGroup admission: pods (and StartTime) are withheld, but the operator keeps
+	// refreshing LastReconcileTime while it waits.
+	assert.False(t, OperatorStale(*ts(time.Hour), kubeflowv1.JobStatus{LastReconcileTime: ts(time.Second)}, timeout, now))
+	assert.False(t, OperatorStale(*ts(time.Hour), kubeflowv1.JobStatus{LastReconcileTime: ts(timeout - time.Second)}, timeout, now))
+
+	// Operator reconciled once and then went away: the old LastReconcileTime does not keep the job alive.
+	assert.True(t, OperatorStale(*ts(time.Hour), kubeflowv1.JobStatus{LastReconcileTime: ts(timeout + time.Second)}, timeout, now))
+	assert.True(t, OperatorStale(*ts(time.Hour), kubeflowv1.JobStatus{LastReconcileTime: ts(30 * time.Minute)}, timeout, now))
+
+	// A LastReconcileTime older than creation (clock skew) never shortens the grace period.
+	assert.False(t, OperatorStale(*ts(time.Second), kubeflowv1.JobStatus{LastReconcileTime: ts(time.Hour)}, timeout, now))
 }
 
 func TestExtractCurrentCondition(t *testing.T) {
