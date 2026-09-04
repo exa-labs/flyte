@@ -640,14 +640,25 @@ func TestGetTaskPhase(t *testing.T) {
 	assert.Equal(t, pluginsCore.PhaseInfoUndefined, taskPhase)
 
 	// Training operator reconciled the job but is holding pod creation until the gang's PodGroup is
-	// admitted: StartTime stays nil past the timeout while LastReconcileTime proves the operator is alive
+	// admitted: StartTime stays nil past the timeout while a fresh LastReconcileTime proves the operator is alive
 	tfJobGangWait := dummyTensorFlowJobResourceCreator(kubeflowv1.JobCreated)
 	tfJobGangWait.CreationTimestamp = v1.Time{Time: time.Now().Add(-time.Hour)}
 	tfJobGangWait.Status.StartTime = nil
-	tfJobGangWait.Status.LastReconcileTime = &v1.Time{Time: time.Now().Add(-time.Minute)}
+	tfJobGangWait.Status.LastReconcileTime = &v1.Time{Time: time.Now().Add(-time.Second)}
 	taskPhase, err = tensorflowResourceHandler.GetTaskPhase(ctx, taskCtx, tfJobGangWait)
 	assert.NoError(t, err)
 	assert.Equal(t, pluginsCore.PhaseQueued, taskPhase.Phase())
+
+	// Training operator reconciled the job once and then stopped: a LastReconcileTime older than the timeout
+	// does not count as liveness
+	tfJobOperatorGone := dummyTensorFlowJobResourceCreator(kubeflowv1.JobCreated)
+	tfJobOperatorGone.CreationTimestamp = v1.Time{Time: time.Now().Add(-time.Hour)}
+	tfJobOperatorGone.Status.StartTime = nil
+	tfJobOperatorGone.Status.LastReconcileTime = &v1.Time{Time: time.Now().Add(-30 * time.Minute)}
+	taskPhase, err = tensorflowResourceHandler.GetTaskPhase(ctx, taskCtx, tfJobOperatorGone)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "kubeflow operator hasn't updated")
+	assert.Equal(t, pluginsCore.PhaseInfoUndefined, taskPhase)
 
 	// Training operator did not modify the job because it is suspended
 	tfJobSuspended := dummyTensorFlowJobResourceCreator(kubeflowv1.JobCreated)

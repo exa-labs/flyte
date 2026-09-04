@@ -173,7 +173,7 @@ func (tensorflowOperatorResourceHandler) GetTaskPhase(ctx context.Context, plugi
 	}
 
 	isSuspended := app.Spec.RunPolicy.Suspend != nil && *app.Spec.RunPolicy.Suspend
-	if !isSuspended && common.OperatorNeverReconciled(app.Status) && app.CreationTimestamp.Add(common.GetConfig().Timeout.Duration).Before(time.Now()) {
+	if !isSuspended && common.OperatorStale(app.CreationTimestamp, app.Status, common.GetConfig().Timeout.Duration, time.Now()) {
 		return pluginsCore.PhaseInfoUndefined, fmt.Errorf("kubeflow operator hasn't updated the tensorflow custom resource since creation time %v", app.CreationTimestamp)
 	}
 
