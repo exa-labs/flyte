@@ -51,5 +51,7 @@ func (Config) mustMarshalJSON(v json.Marshaler) string {
 func (cfg Config) GetPFlagSet(prefix string) *pflag.FlagSet {
 	cmdFlags := pflag.NewFlagSet("Config", pflag.ExitOnError)
 	cmdFlags.String(fmt.Sprintf("%v%v", prefix, "timeout"), defaultConfig.Timeout.String(), "")
+	cmdFlags.String(fmt.Sprintf("%v%v", prefix, "defaultCleanPodPolicy"), defaultConfig.DefaultCleanPodPolicy, "")
+	cmdFlags.Int32(fmt.Sprintf("%v%v", prefix, "defaultTTLSecondsAfterFinished"), defaultConfig.DefaultTTLSecondsAfterFinished, "")
 	return cmdFlags
 }
