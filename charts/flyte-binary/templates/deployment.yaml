@@ -247,6 +247,11 @@ spec:
               mountPath: /etc/flyte/config.d
             - name: state
               mountPath: /var/run/flyte
+            {{- if .Values.webhook.serveFromSecret }}
+            - name: webhook-certs
+              mountPath: /var/run/flyte/certs
+              readOnly: true
+            {{- end }}
             {{- if .Values.deployment.extraVolumeMounts }}
             {{- tpl ( .Values.deployment.extraVolumeMounts | toYaml ) . | nindent 12 }}
             {{- end }}
@@ -315,6 +320,14 @@ spec:
           {{- end }}
         - name: state
           emptyDir: {}
+        {{- if .Values.webhook.serveFromSecret }}
+        # optional: on a fresh install the first pod creates this Secret
+        # itself, then restarts once the kubelet projects it into the volume.
+        - name: webhook-certs
+          secret:
+            secretName: {{ include "flyte-binary.webhook.secretName" . }}
+            optional: true
+        {{- end }}
         {{- if .Values.deployment.extraVolumes }}
         {{- tpl ( .Values.deployment.extraVolumes | toYaml ) . | nindent 8 }}
         {{- end }}

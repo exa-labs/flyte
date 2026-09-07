@@ -176,7 +176,7 @@ func (mpiOperatorResourceHandler) GetTaskPhase(ctx context.Context, pluginContex
 	}
 
 	isSuspended := app.Spec.RunPolicy.Suspend != nil && *app.Spec.RunPolicy.Suspend
-	if !isSuspended && app.Status.StartTime == nil && app.CreationTimestamp.Add(common.GetConfig().Timeout.Duration).Before(time.Now()) {
+	if !isSuspended && common.OperatorNeverReconciled(app.Status) && app.CreationTimestamp.Add(common.GetConfig().Timeout.Duration).Before(time.Now()) {
 		return pluginsCore.PhaseInfoUndefined, fmt.Errorf("kubeflow operator hasn't updated the mpi custom resource since creation time %v", app.CreationTimestamp)
 	}
 	currentCondition, err := common.ExtractCurrentCondition(app.Status.Conditions)

@@ -593,6 +593,16 @@ func TestGetTaskPhase(t *testing.T) {
 	assert.Contains(t, err.Error(), "kubeflow operator hasn't updated")
 	assert.Equal(t, pluginsCore.PhaseInfoUndefined, taskPhase)
 
+	// Training operator reconciled the job but is holding pod creation until the gang's PodGroup is
+	// admitted: StartTime stays nil past the timeout while LastReconcileTime proves the operator is alive
+	mpiJobGangWait := dummyMPIJobResourceCreator(kubeflowv1.JobCreated)
+	mpiJobGangWait.CreationTimestamp = v1.Time{Time: time.Now().Add(-time.Hour)}
+	mpiJobGangWait.Status.StartTime = nil
+	mpiJobGangWait.Status.LastReconcileTime = &v1.Time{Time: time.Now().Add(-time.Minute)}
+	taskPhase, err = mpiResourceHandler.GetTaskPhase(ctx, taskCtx, mpiJobGangWait)
+	assert.NoError(t, err)
+	assert.Equal(t, pluginsCore.PhaseQueued, taskPhase.Phase())
+
 	// Training operator did not modify the job because it is suspended
 	mpiJobSuspended := dummyMPIJobResourceCreator(kubeflowv1.JobCreated)
 	mpiJobSuspended.CreationTimestamp = v1.Time{Time: time.Now().Add(-time.Hour)}

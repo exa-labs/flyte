@@ -8,7 +8,7 @@ A Helm chart for the Flyte local sandbox
 
 | Repository | Name | Version |
 |------------|------|---------|
-| file://../flyte-binary | flyte-binary | v0.1.11 |
+| file://../flyte-binary | flyte-binary | v0.1.12 |
 | https://charts.bitnami.com/bitnami | minio | 12.6.7 |
 | https://charts.bitnami.com/bitnami | postgresql | 12.8.1 |
 | https://kubernetes-retired.github.io/dashboard/ | kubernetes-dashboard | 6.0.0 |

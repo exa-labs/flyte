@@ -28,6 +28,14 @@ const (
 	PytorchTaskType    = "pytorch"
 )
 
+// OperatorNeverReconciled reports whether the training operator has yet to write a timestamp to the job's status.
+// The operator only stamps StartTime once it creates the replica pods; a gang-scheduled job whose PodGroup is
+// still waiting for scheduler admission is held before pod creation and receives only LastReconcileTime. Either
+// field proves the operator saw the job, so only a status with neither means the operator is absent.
+func OperatorNeverReconciled(status kubeflowv1.JobStatus) bool {
+	return status.StartTime == nil && status.LastReconcileTime == nil
+}
+
 // ExtractCurrentCondition will return the first job condition for tensorflow/pytorch
 func ExtractCurrentCondition(jobConditions []kubeflowv1.JobCondition) (kubeflowv1.JobCondition, error) {
 	if jobConditions != nil {
