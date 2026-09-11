@@ -1570,3 +1570,24 @@ func convertListToLiterals(values []int64) *idlcore.Literal {
 		},
 	}
 }
+
+func TestClampedDeltaSeconds(t *testing.T) {
+	const maxDelta = bitarray.Item(3 * 24 * 60 * 60)
+	tests := []struct {
+		name     string
+		delta    time.Duration
+		expected bitarray.Item
+	}{
+		{"negative", -time.Minute, 0},
+		{"zero", 0, 0},
+		{"sub-second", 900 * time.Millisecond, 0},
+		{"in-range", 90*time.Minute + 500*time.Millisecond, 5400},
+		{"at-max", time.Duration(maxDelta) * time.Second, maxDelta},
+		{"past-max", 262374 * time.Second, maxDelta},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.expected, clampedDeltaSeconds(test.delta, maxDelta))
+		})
+	}
+}

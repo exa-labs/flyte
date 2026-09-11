@@ -28,9 +28,13 @@ func (a *CompactArray) validateIndex(index int) {
 	}
 }
 
+// MaxValue returns the largest Item that fits in one slot of the array.
+func (a *CompactArray) MaxValue() Item {
+	return (Item(1) << a.ItemSize) - 1
+}
+
 func (a *CompactArray) validateValue(value Item) {
-	maxValue := (uint64(1) << a.ItemSize) - 1
-	if value > maxValue {
+	if maxValue := a.MaxValue(); value > maxValue {
 		panic(fmt.Sprintf("Value [%v] is too big. Max value is [%v].", value, maxValue))
 	}
 }
