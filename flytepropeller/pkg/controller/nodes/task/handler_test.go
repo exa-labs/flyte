@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -1260,6 +1261,38 @@ func Test_task_Finalize(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Concurrent rounds resolving the same plugin/task-type pair must register the
+// per-task counters exactly once; a second registration panics inside
+// labeled.NewCounter (prometheus duplicate collector).
+func Test_task_fetchPluginTaskMetrics_Concurrent(t *testing.T) {
+	tk := &Handler{
+		pluginScope:    promutils.NewTestScope(),
+		taskMetricsMap: make(map[MetricKey]*taskMetrics),
+	}
+
+	const goroutines = 32
+	results := make([]*taskMetrics, goroutines)
+	var start, done sync.WaitGroup
+	start.Add(1)
+	done.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func(i int) {
+			defer done.Done()
+			start.Wait()
+			m, err := tk.fetchPluginTaskMetrics("plugin-a", "task-a")
+			assert.NoError(t, err)
+			results[i] = m
+		}(i)
+	}
+	start.Done()
+	done.Wait()
+
+	for _, m := range results {
+		assert.Same(t, results[0], m)
+	}
+	assert.Len(t, tk.taskMetricsMap, 1)
 }
 
 func TestNew(t *testing.T) {

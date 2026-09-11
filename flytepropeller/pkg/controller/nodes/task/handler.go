@@ -381,7 +381,7 @@ func (t *Handler) Setup(ctx context.Context, sCtx interfaces.SetupContext) error
 	return nil
 }
 
-func (t Handler) ResolvePlugin(ctx context.Context, ttype string, executionConfig v1alpha1.ExecutionConfig) (pluginCore.Plugin, error) {
+func (t *Handler) ResolvePlugin(ctx context.Context, ttype string, executionConfig v1alpha1.ExecutionConfig) (pluginCore.Plugin, error) {
 	// If the workflow specifies plugin overrides, check to see if any of the specified plugins for that type are
 	// registered in this deployment of flytepropeller.
 	if len(executionConfig.TaskPluginImpls[ttype].PluginIDs) > 0 {
@@ -433,7 +433,7 @@ func validateTransition(transition pluginCore.Transition) error {
 	return nil
 }
 
-func (t Handler) fetchPluginTaskMetrics(pluginID, taskType string) (*taskMetrics, error) {
+func (t *Handler) fetchPluginTaskMetrics(pluginID, taskType string) (*taskMetrics, error) {
 	metricNameKey, err := utils.GetSanitizedPrometheusKey(getPluginMetricKey(pluginID, taskType))
 	if err != nil {
 		return nil, err
@@ -506,7 +506,7 @@ func GetDeckStatus(ctx context.Context, tCtx *taskExecutionContext) (DeckStatus,
 	return DeckDisabled, nil
 }
 
-func (t Handler) invokePlugin(ctx context.Context, p pluginCore.Plugin, tCtx *taskExecutionContext, ts handler.TaskNodeState) (*pluginRequestedTransition, error) {
+func (t *Handler) invokePlugin(ctx context.Context, p pluginCore.Plugin, tCtx *taskExecutionContext, ts handler.TaskNodeState) (*pluginRequestedTransition, error) {
 	pluginTrns := &pluginRequestedTransition{}
 
 	trns, err := func() (trns pluginCore.Transition, err error) {
@@ -674,7 +674,7 @@ func (t Handler) invokePlugin(ctx context.Context, p pluginCore.Plugin, tCtx *ta
 	return pluginTrns, nil
 }
 
-func (t Handler) Handle(ctx context.Context, nCtx interfaces.NodeExecutionContext) (handler.Transition, error) {
+func (t *Handler) Handle(ctx context.Context, nCtx interfaces.NodeExecutionContext) (handler.Transition, error) {
 	ctx, span := otelutils.NewSpan(ctx, otelutils.FlytePropellerTracer, "pkg.controller.nodes.task.Handler/HandleTask")
 	defer span.End()
 
@@ -925,7 +925,7 @@ func (t *Handler) ValidateOutput(ctx context.Context, nodeID v1alpha1.NodeID, i 
 	return nil, nil
 }
 
-func (t Handler) Abort(ctx context.Context, nCtx interfaces.NodeExecutionContext, reason string) error {
+func (t *Handler) Abort(ctx context.Context, nCtx interfaces.NodeExecutionContext, reason string) error {
 	taskNodeState := nCtx.NodeStateReader().GetTaskNodeState()
 	currentPhase := taskNodeState.PluginPhase
 	currentPhaseVersion := taskNodeState.PluginPhaseVersion
@@ -1029,7 +1029,7 @@ func (t Handler) Abort(ctx context.Context, nCtx interfaces.NodeExecutionContext
 	return nil
 }
 
-func (t Handler) Finalize(ctx context.Context, nCtx interfaces.NodeExecutionContext) error {
+func (t *Handler) Finalize(ctx context.Context, nCtx interfaces.NodeExecutionContext) error {
 	logger.Debugf(ctx, "Finalize invoked.")
 	ttype := nCtx.TaskReader().GetTaskType()
 	p, err := t.ResolvePlugin(ctx, ttype, nCtx.ExecutionContext().GetExecutionConfig())
