@@ -418,8 +418,13 @@ func (a *arrayNodeHandler) Handle(ctx context.Context, nCtx interfaces.NodeExecu
 					arrayNodeState.SubNodeDeltaTimestamps.SetItem(index, 0)
 				} else if startedAt != nil && arrayNodeState.SubNodeDeltaTimestamps.GetItem(index) == 0 {
 					// otherwise if `SubNodeDeltaTimestamps` is unset, we compute the delta and set it
-					deltaDuration := uint64(subNodeStartedAt.Time.Sub(startedAt.Time).Seconds())
-					arrayNodeState.SubNodeDeltaTimestamps.SetItem(index, deltaDuration)
+					delta := subNodeStartedAt.Time.Sub(startedAt.Time)
+					maxDelta := arrayNodeState.SubNodeDeltaTimestamps.MaxValue()
+					deltaSeconds := clampedDeltaSeconds(delta, maxDelta)
+					if delta > 0 && deltaSeconds < bitarray.Item(delta/time.Second) {
+						logger.Warnf(ctx, "subNode [%d] started %v after the ArrayNode, exceeding array-node.max-delta-timestamp; storing the offset as %ds", index, delta, maxDelta)
+					}
+					arrayNodeState.SubNodeDeltaTimestamps.SetItem(index, deltaSeconds)
 				}
 			}
 
@@ -824,4 +829,15 @@ func (a *arrayNodeHandler) buildArrayNodeContext(ctx context.Context, nCtx inter
 	arrayNodeExecutor := a.nodeExecutor.WithNodeExecutionContextBuilder(arrayNodeExecutionContextBuilder)
 
 	return arrayNodeExecutor, arrayExecutionContext, &arrayNodeLookup, &arrayNodeLookup, &subNodeSpec, subNodeStatus, nil
+}
+
+// clampedDeltaSeconds converts the offset between an ArrayNode's start and a subNode's start into
+// whole seconds that fit within a SubNodeDeltaTimestamps slot. Negative offsets map to 0 (unset) and
+// offsets past maxDelta saturate, so a subNode that starts long after its parent only loses start
+// precision instead of failing the round.
+func clampedDeltaSeconds(delta time.Duration, maxDelta bitarray.Item) bitarray.Item {
+	if delta <= 0 {
+		return 0
+	}
+	return min(bitarray.Item(delta/time.Second), maxDelta)
 }

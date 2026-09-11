@@ -155,3 +155,11 @@ func TestBitsNeededCalculation(t *testing.T) {
 	assert.Equal(t, uint(4), bitsNeeded(8))
 
 }
+
+func TestCompactArray_MaxValue(t *testing.T) {
+	itemArray, err := NewCompactArray(5, 3)
+	assert.NoError(t, err)
+	assert.Equal(t, Item(3), itemArray.MaxValue())
+	assert.NotPanics(t, func() { itemArray.SetItem(0, itemArray.MaxValue()) })
+	assert.Panics(t, func() { itemArray.SetItem(0, itemArray.MaxValue()+1) })
+}
